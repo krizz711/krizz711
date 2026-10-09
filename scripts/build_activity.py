@@ -45,7 +45,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 W, H = 1024, 290
 STEP, CS = 17, 13                 # grid pitch and cell size
 X0, Y0 = 82, 110                  # top-left cell
-PX = 1.1                          # one sprite pixel
+PX = 1.25                         # one sprite pixel
 HAND_X = (gs.HANDS[0] - gs.W / 2) * PX
 REACH = 3 * STEP                  # how far from its target Goku fires
 BEAM_LEN = math.ceil(REACH / PX) + 2   # the pixel beam, in sprite pixels
@@ -208,7 +208,7 @@ def goku(segs, T):
         pts = [(t0, 1 if s == name else 0) for t0, _, s, *_ in segs]
         return f'<g opacity="0">{animate("opacity", pts, T, discrete=True)}{body}</g>'
 
-    aura = (f'<ellipse cx="0" cy="{f2(-4 * PX)}" rx="{f2(18 * PX)}" ry="{f2(28 * PX)}" fill="#67e8f9" opacity=".2" shape-rendering="auto">'
+    aura = (f'<ellipse cx="0" cy="{f2(-4 * PX)}" rx="{f2(17 * PX)}" ry="{f2(25 * PX)}" fill="#67e8f9" opacity=".2" shape-rendering="auto">'
             f'<animate attributeName="opacity" values=".1;.3;.1" dur=".16s" repeatCount="indefinite"/></ellipse>')
     return (f'<g>{animate("transform", pos, T, transform="translate")}{animate("opacity", teleport, T)}'
             f'<ellipse cx="0" cy="{f2((gs.H - gs.HANDS[1]) * PX + .5)}" rx="{f2(11 * PX)}" ry="{f2(2.2 * PX)}" fill="{INK}" opacity=".16"/>'
