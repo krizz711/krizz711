@@ -175,7 +175,7 @@ def sprite_defs():
 
 
 AURA_DEFS = (
-    # a cyan glow hugging Goku's silhouette, flickering like a ki aura
+    # a cyan glow hugging Goku's silhouette while he runs and stands, flickering like a ki aura
     '<filter id="aura" x="-60%" y="-40%" width="220%" height="180%">'
     '<feFlood flood-color="#22d3ee" flood-opacity=".8" result="c">'
     '<animate attributeName="flood-opacity" values=".5;.95;.5" dur=".3s" repeatCount="indefinite"/></feFlood>'
@@ -187,8 +187,6 @@ AURA_DEFS = (
     '<filter id="kiglow" x="-50%" y="-120%" width="200%" height="340%">'
     '<feGaussianBlur in="SourceGraphic" stdDeviation="2.6" result="b"/>'
     '<feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>'
-    '<radialGradient id="flame" cx=".5" cy=".62" r=".6"><stop offset="0" stop-color="#ecfeff" stop-opacity=".9"/>'
-    '<stop offset=".55" stop-color="#22d3ee" stop-opacity=".55"/><stop offset="1" stop-color="#06b6d4" stop-opacity="0"/></radialGradient>'
 )
 
 
@@ -216,14 +214,7 @@ def goku(segs, T):
         return f'<g opacity="0">{animate("opacity", pts, T, discrete=True)}{body}</g>'
 
     top, bot = -gs.HANDS[1] * PX - 14, (gs.H - gs.HANDS[1]) * PX + 4
-    mid, half = (top + bot) / 2, 24 * PX
-    flame = (f'M0 {f2(top)} C{f2(half * .6)} {f2(top + 14)} {f2(half)} {f2(mid - 10)} {f2(half * .9)} {f2(mid + 12)} '
-             f'C{f2(half * .8)} {f2(bot - 4)} {f2(half * .4)} {f2(bot)} 0 {f2(bot)} '
-             f'C{f2(-half * .4)} {f2(bot)} {f2(-half * .8)} {f2(bot - 4)} {f2(-half * .9)} {f2(mid + 12)} '
-             f'C{f2(-half)} {f2(mid - 10)} {f2(-half * .6)} {f2(top + 14)} 0 {f2(top)}Z')
-    aura = (f'<g shape-rendering="auto"><path d="{flame}" fill="url(#flame)" opacity=".75">'
-            f'<animateTransform attributeName="transform" type="scale" values="1 1;1.06 1.1;.97 1.03;1 1" dur=".24s" repeatCount="indefinite"/>'
-            f'<animate attributeName="opacity" values=".55;.9;.55" dur=".18s" repeatCount="indefinite"/></path></g>')
+    turn = animate("transform", facing, T, discrete=True, transform="scale")
     sparks = "".join(
         f'<rect x="{f2(x)}" y="0" width="{f2(sz)}" height="{f2(sz)}" fill="{c}" opacity="0">'
         f'<animate attributeName="y" values="{f2(bot - 6)};{f2(top + 6)}" dur="{d:.2f}s" begin="{b0:.2f}s" repeatCount="indefinite"/>'
@@ -231,12 +222,13 @@ def goku(segs, T):
         for x, sz, c, d, b0 in SPARKS)
     return (f'<g>{animate("transform", pos, T, transform="translate")}{animate("opacity", teleport, T)}'
             f'<ellipse cx="0" cy="{f2((gs.H - gs.HANDS[1]) * PX + .5)}" rx="{f2(11 * PX)}" ry="{f2(2.2 * PX)}" fill="{INK}" opacity=".16"/>'
-            f'<g filter="url(#aura)">{animate("transform", facing, T, discrete=True, transform="scale")}'
+            f'<g filter="url(#aura)">{turn}'
             + state("idle", '<use xlink:href="#g-win"/>')
             + state("run", flicker("g-run1", "g-run2", ".26s"))
-            + state("charge", aura + '<use xlink:href="#g-charge"/>')
-            + state("fire", aura + '<use xlink:href="#g-fire"/>')
             + state("win", '<use xlink:href="#g-win"/>')
+            + f'</g><g>{turn}'
+            + state("charge", '<use xlink:href="#g-charge"/>')
+            + state("fire", '<use xlink:href="#g-fire"/>')
             + f'</g><g shape-rendering="auto">{sparks}</g></g>')
 
 
