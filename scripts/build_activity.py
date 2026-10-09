@@ -42,12 +42,13 @@ GREENS = ["#ebedf0", "#9be9a8", "#40c463", "#30a14e", "#216e39"]
 FLASH = "#e0fbff"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-W, H = 1024, 262
+W, H = 1024, 290
 STEP, CS = 17, 13                 # grid pitch and cell size
-X0, Y0 = 82, 98                   # top-left cell
-PX = 1.5                          # one sprite pixel
+X0, Y0 = 82, 110                  # top-left cell
+PX = 1.1                          # one sprite pixel
 HAND_X = (gs.HANDS[0] - gs.W / 2) * PX
 REACH = 3 * STEP                  # how far from its target Goku fires
+BEAM_LEN = math.ceil(REACH / PX) + 2   # the pixel beam, in sprite pixels
 SPEED = 520                       # running speed, px/s
 CHARGE, EXTEND, HOLD, FADE = .24, .12, .14, .1
 INTRO, VICTORY, RESET = .5, 2.2, .7
@@ -150,7 +151,7 @@ def plan(areas, nweeks):
         for i, (centre, _) in enumerate(todo):
             for side in (1, -1):
                 gx, gy, _ = stand(centre, side)
-                if X0 - 4 <= gx <= W - 30:  # clear of the day labels and the panel edge
+                if X0 + 6 <= gx <= W - 34:  # clear of the day labels and the panel edge
                     options.append((math.dist(pos, (gx, gy)), i, side))
         dist, i, side = min(options)
         centre, members = todo.pop(i)
@@ -174,6 +175,28 @@ def plan(areas, nweeks):
 
 
 # ───────────────────────────── rendering ─────────────────────────────
+def sprite_defs():
+    """Goku's frames and the pixel Kamehameha pieces, defined once and placed with <use>."""
+    fr = gs.frames()
+    out = [f'<g id="g-{n}">{gs.to_svg(fr[n], PX, -gs.W / 2 * PX, -gs.HANDS[1] * PX)}</g>' for n in ("run1", "run2", "charge", "fire", "win")]
+
+    def centred(name, rows):
+        return f'<g id="{name}">{gs.to_svg(rows, PX, -len(rows[0]) / 2 * PX, -len(rows) / 2 * PX)}</g>'
+    beam = gs.beam(BEAM_LEN)
+    out.append(f'<g id="k-beam">{gs.to_svg(beam, PX, 0, -len(beam) / 2 * PX)}</g>')
+    out += [centred("k-head1", gs.blob(7, 9, 0)), centred("k-head2", gs.blob(7, 9, .35)),
+            centred("k-orb1", gs.blob(3)), centred("k-orb2", gs.blob(4, 7)),
+            centred("k-burst1", gs.burst(7)), centred("k-burst2", gs.burst(11)), centred("k-ring", gs.burst(14, True))]
+    return "".join(out)
+
+
+def flicker(a, b, period=".24s"):
+    """Two pieces swapping back and forth forever: a run cycle, a crackling ki ball."""
+    anim = '<animate attributeName="opacity" values="{}" dur="' + period + '" calcMode="discrete" repeatCount="indefinite"/>'
+    return (f'<g>{anim.format("1;0")}<use xlink:href="#{a}"/></g>'
+            f'<g opacity="0">{anim.format("0;1")}<use xlink:href="#{b}"/></g>')
+
+
 def goku(segs, T):
     pos = []
     for t0, t1, *_, a, b in segs:
@@ -181,67 +204,60 @@ def goku(segs, T):
     facing = [(t0, f"{side} 1") for t0, _, _, side, *_ in segs]
     teleport = [(0, 0), (.08, 1), (.14, .25), (.22, 1), (T - .62, 1), (T - .56, .25), (T - .5, 1), (T - .42, 0)]
 
-    def frame(name):
-        return gs.to_svg(gs.frames()[name], PX, -gs.W / 2 * PX, -gs.HANDS[1] * PX)
-
     def state(name, body):
         pts = [(t0, 1 if s == name else 0) for t0, _, s, *_ in segs]
         return f'<g opacity="0">{animate("opacity", pts, T, discrete=True)}{body}</g>'
 
-    flicker = '<animate attributeName="opacity" values="{}" dur=".24s" calcMode="discrete" repeatCount="indefinite"/>'
-    aura = (f'<ellipse cx="0" cy="{f2(-4 * PX)}" rx="{f2(15 * PX)}" ry="{f2(18 * PX)}" fill="#67e8f9" opacity=".2">'
-            f'<animate attributeName="opacity" values=".12;.32;.12" dur=".16s" repeatCount="indefinite"/></ellipse>')
+    aura = (f'<ellipse cx="0" cy="{f2(-4 * PX)}" rx="{f2(18 * PX)}" ry="{f2(28 * PX)}" fill="#67e8f9" opacity=".2" shape-rendering="auto">'
+            f'<animate attributeName="opacity" values=".1;.3;.1" dur=".16s" repeatCount="indefinite"/></ellipse>')
     return (f'<g>{animate("transform", pos, T, transform="translate")}{animate("opacity", teleport, T)}'
-            f'<ellipse cx="0" cy="{f2((gs.H - gs.HANDS[1]) * PX + .5)}" rx="{f2(8 * PX)}" ry="{f2(2 * PX)}" fill="{INK}" opacity=".14"/>'
-            f'<g shape-rendering="crispEdges">{animate("transform", facing, T, discrete=True, transform="scale")}'
-            + state("idle", frame("run2"))
-            + state("run", f'<g>{flicker.format("1;0")}{frame("run1")}</g><g opacity="0">{flicker.format("0;1")}{frame("run2")}</g>')
-            + state("charge", f'<g shape-rendering="auto">{aura}</g>' + frame("charge"))
-            + state("fire", frame("fire"))
-            + state("win", frame("win"))
+            f'<ellipse cx="0" cy="{f2((gs.H - gs.HANDS[1]) * PX + .5)}" rx="{f2(11 * PX)}" ry="{f2(2.2 * PX)}" fill="{INK}" opacity=".16"/>'
+            f'<g>{animate("transform", facing, T, discrete=True, transform="scale")}'
+            + state("idle", '<use xlink:href="#g-run2"/>')
+            + state("run", flicker("g-run1", "g-run2"))
+            + state("charge", aura + '<use xlink:href="#g-charge"/>')
+            + state("fire", '<use xlink:href="#g-fire"/>')
+            + state("win", '<use xlink:href="#g-win"/>')
             + "</g></g>")
 
 
-def blast(b, T, first):
+def blast(b, T, i):
     side, hx, y = b["side"], b["hx"], b["y"]
     length = abs(b["centre"][0] - hx)
     cx, cy = b["centre"]
     ch_x = hx + side * ((gs.CHARGE_HANDS[0] - gs.W / 2) * PX - HAND_X)
     ch_y = y + (gs.CHARGE_HANDS[1] - gs.HANDS[1]) * PX
     show = [(0, 0), (b["fire"], 0), (b["fire"] + .01, 1), (b["end"], 1), (b["end"] + FADE, 0)]
-    grow = [(0, 0), (b["fire"], 0), (b["impact"], f2(length))]
+    imp = b["impact"]
+
+    def blink(t0, t1):
+        return animate("opacity", [(0, 0), (t0, 1), (t1, 0)], T, discrete=True)
+    orb = (
+        # the ki ball crackling in his cupped hands while Goku charges (drawn over him)
+        f'<g transform="translate({f2(ch_x)} {f2(ch_y)})" opacity="0">'
+        + animate("opacity", [(0, 0), (b["charge"], 0), (b["charge"] + .01, 1), (b["fire"], 1), (b["fire"] + .01, 0)], T)
+        + flicker("k-orb1", "k-orb2", ".1s") + "</g>")
     out = [
-        # the ki ball gathering at the hip
-        f'<circle cx="{f2(ch_x)}" cy="{f2(ch_y)}" r="0" fill="url(#ki)">'
-        + animate("r", [(0, 0), (b["charge"], 0), (b["fire"], 5)], T)
-        + animate("opacity", [(0, 0), (b["charge"], 0), (b["charge"] + .01, 1), (b["fire"], 1), (b["fire"] + .01, 0)], T) + "</circle>",
-        # the beam, drawn facing right and mirrored for left-facing blasts
+        # the beam: revealed pixel by pixel behind its head, drawn facing right and mirrored for left-facing blasts
         f'<g transform="translate({f2(hx)} {f2(y)}) scale({side} 1)" opacity="0">{animate("opacity", show, T)}'
-        f'<rect x="0" y="-7" width="0" height="14" rx="7" fill="url(#beam)">{animate("width", grow, T)}</rect>'
-        f'<rect x="0" y="-2.8" width="0" height="5.6" rx="2.8" fill="#f0fdff">{animate("width", grow, T)}</rect>'
-        f'<circle cx="0" cy="0" r="7" fill="url(#ki)"/>'
-        f'<circle cx="0" cy="0" r="10" fill="url(#ki)">{animate("cx", grow, T)}</circle></g>',
-        # the explosion over the damage area
-        f'<circle cx="{f2(cx)}" cy="{f2(cy)}" r="2" fill="url(#ki)" opacity="0">'
-        + animate("r", [(0, 2), (b["impact"], 2), (b["impact"] + .12, 22), (b["impact"] + .34, 26)], T)
-        + animate("opacity", [(0, 0), (b["impact"], 0), (b["impact"] + .01, 1), (b["impact"] + .14, .9), (b["impact"] + .36, 0)], T) + "</circle>",
-        f'<circle cx="{f2(cx)}" cy="{f2(cy)}" r="4" fill="none" stroke="#06b6d4" stroke-width="2.5" opacity="0">'
-        + animate("r", [(0, 4), (b["impact"], 4), (b["impact"] + .4, 32)], T)
-        + animate("opacity", [(0, 0), (b["impact"], 0), (b["impact"] + .01, .9), (b["impact"] + .4, 0)], T) + "</circle>",
-        # sparks flying out of the blast
-        f'<g transform="translate({f2(cx)} {f2(cy)})" opacity="0">'
-        + animate("opacity", [(0, 0), (b["impact"], 0), (b["impact"] + .01, 1), (b["impact"] + .3, 1), (b["impact"] + .42, 0)], T)
-        + f'<g>{animate("transform", [(0, ".4"), (b["impact"], ".4"), (b["impact"] + .42, "1.7")], T, transform="scale")}'
-        + "".join(f'<path d="M{f2(9 * math.cos(a))} {f2(9 * math.sin(a))}L{f2(15 * math.cos(a))} {f2(15 * math.sin(a))}" stroke="#0891b2" stroke-width="2" stroke-linecap="round"/>'
-                  for a in (math.radians(20 + 45 * i) for i in range(8)))
-        + "</g></g>",
+        f'<clipPath id="kc{i}"><rect x="-2" y="-12" width="0" height="24">'
+        + animate("width", [(0, 0), (b["fire"], 0), (imp, f2(length + 2))], T) + "</rect></clipPath>"
+        f'<g clip-path="url(#kc{i})"><use xlink:href="#k-beam"/></g>'
+        '<use xlink:href="#k-orb2"/>'
+        f'<g>{animate("transform", [(0, "0 0"), (b["fire"], "0 0"), (imp, f"{f2(length)} 0")], T, transform="translate")}'
+        + flicker("k-head1", "k-head2", ".12s") + "</g></g>",
+        # the explosion over the damage area: flash, bigger flash, ring of sparks
+        f'<g transform="translate({f2(cx)} {f2(cy)})">'
+        f'<use xlink:href="#k-burst1" opacity="0">{blink(imp, imp + .08)}</use>'
+        f'<use xlink:href="#k-burst2" opacity="0">{blink(imp + .08, imp + .2)}</use>'
+        f'<use xlink:href="#k-ring" opacity="0">{blink(imp + .2, imp + .34)}</use></g>',
     ]
-    if first:
+    if i == 0:
         gx = min(max(hx - side * HAND_X, 125), W - 80)
         out.append(f'<text x="{f2(gx)}" y="{f2(y - gs.HANDS[1] * PX - 8)}" text-anchor="middle" font-family="{INTER}" font-weight="700" '
-                   f'font-size="11" letter-spacing="1" fill="#0e7490" opacity="0">KA-ME-HA-ME-HA!'
+                   f'font-size="11" letter-spacing="1" fill="#1d4ed8" opacity="0">KA-ME-HA-ME-HA!'
                    + animate("opacity", [(0, 0), (b["charge"], 0), (b["charge"] + .08, 1), (b["end"] + .5, 1), (b["end"] + .8, 0)], T) + "</text>")
-    return "".join(out)
+    return "".join(out), orb
 
 
 def render(cal):
@@ -255,6 +271,7 @@ def render(cal):
     hits = {(wi, d["weekday"]): level(d["contributionCount"]) for wi, w in enumerate(weeks) for d in w["contributionDays"] if d["contributionCount"]}
     segs, blasts, T = plan(damage_areas(hits, len(weeks)), len(weeks))
     reveal = {c: t for b in blasts for c, t in b["reveal"].items()}
+    fx = [blast(b, T, i) for i, b in enumerate(blasts)]
 
     cells, months = [], []
     last_month = None
@@ -277,7 +294,7 @@ def render(cal):
                 cells.append(f'<rect x="{x}" y="{y}" width="{CS}" height="{CS}" rx="3" fill="{GREENS[0]}">{tip}</rect>')
     days = "".join(f'<text x="36" y="{Y0 + r * STEP + 10}" font-family="{INTER}" font-size="10.5" fill="{MUTED}">{n}</text>'
                    for r, n in ((1, "Mon"), (3, "Wed"), (5, "Fri")))
-    ly = Y0 + 7 * STEP + 14
+    ly = Y0 + 7 * STEP + 28
     lx = X0 + len(weeks) * STEP - 4 - 5 * 15 - 30
     legend = (f'<text x="{lx - 8}" y="{ly + 10}" text-anchor="end" font-family="{INTER}" font-size="10.5" fill="{MUTED}">Less</text>'
               + "".join(f'<rect x="{lx + i * 15}" y="{ly}" width="{CS - 1}" height="{CS - 1}" rx="3" fill="{c}"/>' for i, c in enumerate(GREENS))
@@ -287,11 +304,10 @@ def render(cal):
     fonts = f"<style>{open(css_path).read()}</style>" if os.path.exists(css_path) else ""
     icon = ('<svg x="36" y="24" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
             '<circle cx="9" cy="9" r="5"/><circle cx="16" cy="14" r="5"/><circle cx="9" cy="17" r="3"/></svg>')
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="GitHub activity: a pixel-art Goku fires a Kamehameha at every day with contributions, lighting up {total:,} contributions from the last 12 months">
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="GitHub activity: a pixel-art Goku fires a Kamehameha at every day with contributions, lighting up {total:,} contributions from the last 12 months">
 <title>GitHub Activity — updated {date.today().isoformat()}</title>
 <defs>{fonts}<clipPath id="frame"><rect width="{W}" height="{H}" rx="18"/></clipPath>
-  <radialGradient id="ki"><stop offset="0" stop-color="#ffffff"/><stop offset=".4" stop-color="#ecfeff"/><stop offset=".7" stop-color="#67e8f9" stop-opacity=".85"/><stop offset="1" stop-color="#06b6d4" stop-opacity="0"/></radialGradient>
-  <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#22d3ee" stop-opacity="0"/><stop offset=".5" stop-color="#67e8f9"/><stop offset="1" stop-color="#22d3ee" stop-opacity="0"/></linearGradient>
+  {sprite_defs()}
 </defs>
 <g clip-path="url(#frame)">
 <rect width="{W}" height="{H}" fill="#fff"/>
@@ -302,8 +318,9 @@ def render(cal):
 {"".join(months)}
 {days}
 {"".join(cells)}
-{"".join(blast(b, T, i == 0) for i, b in enumerate(blasts))}
+<g shape-rendering="crispEdges">{"".join(under for under, _ in fx)}
 {goku(segs, T)}
+{"".join(over for _, over in fx)}</g>
 {legend}
 <text x="{X0}" y="{ly + 10}" font-family="{INTER}" font-size="10.5" fill="{MUTED}">updated {date.today().strftime("%d %b %Y")}</text>
 </g>
