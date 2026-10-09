@@ -1,5 +1,10 @@
 """Builds the "GitHub Activity" panel of the profile README from live data.
 
+A micro pixel-art kid Goku runs around the contribution grid and fires a
+Kamehameha at every day with contributions. Each blast lights up the cells in
+its damage area (up to four) in their real contribution colour. It is all SMIL,
+so it plays inside a README <img>, then resets and loops.
+
 Runs in GitHub Actions (.github/workflows/profile-assets.yml) with the
 workflow's GITHUB_TOKEN and nothing but the standard library.
 
@@ -7,27 +12,25 @@ workflow's GITHUB_TOKEN and nothing but the standard library.
     python scripts/build_activity.py --mock dist/activity.svg      # offline preview
 """
 import json
+import math
 import os
 import random
 import sys
 import urllib.request
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
+from xml.etree import ElementTree
 from xml.sax.saxutils import escape
 
+import goku_sprite as gs
+
 QUERY = """
-query($login: String!, $pfrom: DateTime!, $pto: DateTime!) {
+query($login: String!) {
   user(login: $login) {
     contributionsCollection {
-      totalCommitContributions
-      totalPullRequestContributions
-      totalIssueContributions
       contributionCalendar {
         totalContributions
         weeks { firstDay contributionDays { contributionCount date weekday } }
       }
-    }
-    prev: contributionsCollection(from: $pfrom, to: $pto) {
-      contributionCalendar { totalContributions }
     }
   }
 }
@@ -36,23 +39,30 @@ query($login: String!, $pfrom: DateTime!, $pto: DateTime!) {
 INTER = "'Inter','Segoe UI',Helvetica,Arial,sans-serif"
 INK, INK2, MUTED, LINE = "#0f172a", "#1f2937", "#6b7280", "#e5e7eb"
 GREENS = ["#ebedf0", "#9be9a8", "#40c463", "#30a14e", "#216e39"]
+FLASH = "#e0fbff"
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+W, H = 1024, 262
+STEP, CS = 17, 13                 # grid pitch and cell size
+X0, Y0 = 82, 98                   # top-left cell
+PX = 1.5                          # one sprite pixel
+HAND_X = (gs.HANDS[0] - gs.W / 2) * PX
+REACH = 3 * STEP                  # how far from its target Goku fires
+SPEED = 520                       # running speed, px/s
+CHARGE, EXTEND, HOLD, FADE = .24, .12, .14, .1
+INTRO, VICTORY, RESET = .5, 2.2, .7
 
 
 def fetch(login, token):
-    now = datetime.now(timezone.utc)
-    variables = {"login": login,
-                 "pfrom": (now - timedelta(days=730)).isoformat(),
-                 "pto": (now - timedelta(days=365)).isoformat()}
     req = urllib.request.Request(
         "https://api.github.com/graphql",
-        data=json.dumps({"query": QUERY, "variables": variables}).encode(),
+        data=json.dumps({"query": QUERY, "variables": {"login": login}}).encode(),
         headers={"Authorization": f"bearer {token}", "Content-Type": "application/json", "User-Agent": "profile-activity"})
     with urllib.request.urlopen(req, timeout=30) as r:
         payload = json.load(r)
     if payload.get("errors"):
         raise SystemExit(f"GraphQL error: {payload['errors']}")
-    return payload["data"]["user"]
+    return payload["data"]["user"]["contributionsCollection"]["contributionCalendar"]
 
 
 def mock():
@@ -64,109 +74,238 @@ def mock():
         days = []
         for _ in range(7):
             if d <= date.today():
-                days.append({"contributionCount": max(0, int(rng.gauss(2.5, 3.5))), "date": d.isoformat(), "weekday": (d.weekday() + 1) % 7})
+                days.append({"contributionCount": max(0, int(rng.gauss(-1, 4))), "date": d.isoformat(), "weekday": (d.weekday() + 1) % 7})
             d += timedelta(days=1)
         weeks.append({"firstDay": days[0]["date"], "contributionDays": days})
-    total = sum(x["contributionCount"] for w in weeks for x in w["contributionDays"])
-    return {"contributionsCollection": {"totalCommitContributions": int(total * .62), "totalPullRequestContributions": 31,
-                                        "totalIssueContributions": 9,
-                                        "contributionCalendar": {"totalContributions": total, "weeks": weeks}},
-            "prev": {"contributionCalendar": {"totalContributions": int(total * .7)}}}
+    return {"totalContributions": sum(x["contributionCount"] for w in weeks for x in w["contributionDays"]), "weeks": weeks}
 
 
-ICONS = {
-    "activity": '<circle cx="9" cy="9" r="5"/><circle cx="16" cy="14" r="5"/><circle cx="9" cy="17" r="3"/>',
-    "commit": '<circle cx="12" cy="12" r="3.5"/><path d="M3 12h5.5M15.5 12H21"/>',
-    "pr": '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7M18 15.5V9a3 3 0 0 0-3-3h-4"/><path d="M13 3.5 10.5 6 13 8.5"/>',
-    "issue": '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/>',
-}
+# ───────────────────────────── animation helpers ─────────────────────────────
+def animate(attr, pts, T, discrete=False, transform=None):
+    """One looping SMIL animation from (seconds, value) keyframes on a T-second cycle."""
+    if discrete:
+        pts = [p for i, p in enumerate(pts) if i == 0 or p[1] != pts[i - 1][1]]
+    if pts[0][0] > 0:
+        pts = [(0, pts[0][1])] + pts
+    if not discrete and pts[-1][0] < T:
+        pts = pts + [(T, pts[-1][1])]
+    keys, last = [], -1.0
+    for t, _ in pts:
+        k = max(round(t / T, 5), round(last + 1e-5, 5))
+        keys.append(k)
+        last = k
+    if not discrete:
+        keys[-1] = 1
+    tag = "animateTransform" if transform else "animate"
+    extra = (f' type="{transform}"' if transform else "") + (' calcMode="discrete"' if discrete else "")
+    return (f'<{tag} attributeName="{attr}"{extra} values="{";".join(str(v) for _, v in pts)}" '
+            f'keyTimes="{";".join(f"{k:.5f}" for k in keys)}" dur="{T:.3f}s" repeatCount="indefinite"/>')
 
 
-def icon(kind, x, y, size, color=INK2, sw=1.9):
-    return (f'<svg x="{x}" y="{y}" width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="{sw}" '
-            f'stroke-linecap="round" stroke-linejoin="round" color="{color}">{ICONS[kind]}</svg>')
+def f2(v):
+    return f"{v:.1f}".rstrip("0").rstrip(".")
 
 
-def fade(begin, dur=.5):
-    return f'<animate attributeName="opacity" from="0" to="1" begin="{begin:.2f}s" dur="{dur}s" fill="freeze"/>'
+def cell_xy(w, d):
+    return X0 + w * STEP + CS / 2, Y0 + d * STEP + CS / 2
 
 
-def render(u):
-    W, H = 1024, 232
-    cc = u["contributionsCollection"]
-    cal = cc["contributionCalendar"]
+# ───────────────────────────── the plan ─────────────────────────────
+def damage_areas(hits, nweeks):
+    """Greedy cover of every lit cell by 3×3 blast areas holding at most four cells each."""
+    left = set(hits)
+    areas = []
+    while left:
+        best = None
+        for w in range(nweeks):
+            for d in range(7):
+                near = sorted((abs(a - w) + abs(b - d), (a, b)) for a in (w - 1, w, w + 1) for b in (d - 1, d, d + 1) if (a, b) in left)[:4]
+                if not near:
+                    continue
+                score = (len(near), (w, d) in left, -sum(n for n, _ in near), -w, -d)
+                if best is None or score > best[0]:
+                    best = (score, (w, d), [c for _, c in near])
+        _, centre, members = best
+        left -= set(members)
+        areas.append((centre, members))
+    return areas
+
+
+def stand(centre, side):
+    """Where Goku stands to hit centre while facing side (+1 right, -1 left)."""
+    cx, cy = cell_xy(*centre)
+    hx = cx - side * REACH
+    return hx - side * HAND_X, cy, hx
+
+
+def plan(areas, nweeks):
+    """Order the blasts nearest-first and lay out the whole timeline."""
+    pos = (X0 + 30, Y0 + 3 * STEP + CS / 2)
+    t, facing = INTRO, 1
+    segs = [(0, INTRO, "idle", 1, pos, pos)]
+    blasts = []
+    todo = list(areas)
+    while todo:
+        options = []
+        for i, (centre, _) in enumerate(todo):
+            for side in (1, -1):
+                gx, gy, _ = stand(centre, side)
+                if X0 - 4 <= gx <= W - 30:  # clear of the day labels and the panel edge
+                    options.append((math.dist(pos, (gx, gy)), i, side))
+        dist, i, side = min(options)
+        centre, members = todo.pop(i)
+        gx, gy, hx = stand(centre, side)
+        if dist > 1:
+            run = .08 + dist / SPEED
+            if abs(gx - pos[0]) > 2:
+                facing = 1 if gx > pos[0] else -1
+            segs.append((t, t + run, "run", facing, pos, (gx, gy)))
+            t += run
+        pos, facing = (gx, gy), side
+        segs.append((t, t + CHARGE, "charge", side, pos, pos))
+        segs.append((t + CHARGE, t + CHARGE + EXTEND + HOLD + FADE, "fire", side, pos, pos))
+        fire = t + CHARGE
+        impact = fire + EXTEND
+        blasts.append({"side": side, "hx": hx, "y": gy, "centre": cell_xy(*centre), "charge": t, "fire": fire,
+                       "impact": impact, "end": impact + HOLD, "reveal": {c: impact + .035 * (abs(c[0] - centre[0]) + abs(c[1] - centre[1])) for c in members}})
+        t = fire + EXTEND + HOLD + FADE
+    segs.append((t, t + VICTORY + RESET, "win", facing, pos, pos))
+    return segs, blasts, t + VICTORY + RESET
+
+
+# ───────────────────────────── rendering ─────────────────────────────
+def goku(segs, T):
+    pos = []
+    for t0, t1, *_, a, b in segs:
+        pos += [(t0, f"{f2(a[0])} {f2(a[1])}"), (t1, f"{f2(b[0])} {f2(b[1])}")]
+    facing = [(t0, f"{side} 1") for t0, _, _, side, *_ in segs]
+    teleport = [(0, 0), (.08, 1), (.14, .25), (.22, 1), (T - .62, 1), (T - .56, .25), (T - .5, 1), (T - .42, 0)]
+
+    def frame(name):
+        return gs.to_svg(gs.frames()[name], PX, -gs.W / 2 * PX, -gs.HANDS[1] * PX)
+
+    def state(name, body):
+        pts = [(t0, 1 if s == name else 0) for t0, _, s, *_ in segs]
+        return f'<g opacity="0">{animate("opacity", pts, T, discrete=True)}{body}</g>'
+
+    flicker = '<animate attributeName="opacity" values="{}" dur=".24s" calcMode="discrete" repeatCount="indefinite"/>'
+    aura = (f'<ellipse cx="0" cy="{f2(-4 * PX)}" rx="{f2(15 * PX)}" ry="{f2(18 * PX)}" fill="#67e8f9" opacity=".2">'
+            f'<animate attributeName="opacity" values=".12;.32;.12" dur=".16s" repeatCount="indefinite"/></ellipse>')
+    return (f'<g>{animate("transform", pos, T, transform="translate")}{animate("opacity", teleport, T)}'
+            f'<ellipse cx="0" cy="{f2((gs.H - gs.HANDS[1]) * PX + .5)}" rx="{f2(8 * PX)}" ry="{f2(2 * PX)}" fill="{INK}" opacity=".14"/>'
+            f'<g shape-rendering="crispEdges">{animate("transform", facing, T, discrete=True, transform="scale")}'
+            + state("idle", frame("run2"))
+            + state("run", f'<g>{flicker.format("1;0")}{frame("run1")}</g><g opacity="0">{flicker.format("0;1")}{frame("run2")}</g>')
+            + state("charge", f'<g shape-rendering="auto">{aura}</g>' + frame("charge"))
+            + state("fire", frame("fire"))
+            + state("win", frame("win"))
+            + "</g></g>")
+
+
+def blast(b, T, first):
+    side, hx, y = b["side"], b["hx"], b["y"]
+    length = abs(b["centre"][0] - hx)
+    cx, cy = b["centre"]
+    ch_x = hx + side * ((gs.CHARGE_HANDS[0] - gs.W / 2) * PX - HAND_X)
+    ch_y = y + (gs.CHARGE_HANDS[1] - gs.HANDS[1]) * PX
+    show = [(0, 0), (b["fire"], 0), (b["fire"] + .01, 1), (b["end"], 1), (b["end"] + FADE, 0)]
+    grow = [(0, 0), (b["fire"], 0), (b["impact"], f2(length))]
+    out = [
+        # the ki ball gathering at the hip
+        f'<circle cx="{f2(ch_x)}" cy="{f2(ch_y)}" r="0" fill="url(#ki)">'
+        + animate("r", [(0, 0), (b["charge"], 0), (b["fire"], 5)], T)
+        + animate("opacity", [(0, 0), (b["charge"], 0), (b["charge"] + .01, 1), (b["fire"], 1), (b["fire"] + .01, 0)], T) + "</circle>",
+        # the beam, drawn facing right and mirrored for left-facing blasts
+        f'<g transform="translate({f2(hx)} {f2(y)}) scale({side} 1)" opacity="0">{animate("opacity", show, T)}'
+        f'<rect x="0" y="-7" width="0" height="14" rx="7" fill="url(#beam)">{animate("width", grow, T)}</rect>'
+        f'<rect x="0" y="-2.8" width="0" height="5.6" rx="2.8" fill="#f0fdff">{animate("width", grow, T)}</rect>'
+        f'<circle cx="0" cy="0" r="7" fill="url(#ki)"/>'
+        f'<circle cx="0" cy="0" r="10" fill="url(#ki)">{animate("cx", grow, T)}</circle></g>',
+        # the explosion over the damage area
+        f'<circle cx="{f2(cx)}" cy="{f2(cy)}" r="2" fill="url(#ki)" opacity="0">'
+        + animate("r", [(0, 2), (b["impact"], 2), (b["impact"] + .12, 22), (b["impact"] + .34, 26)], T)
+        + animate("opacity", [(0, 0), (b["impact"], 0), (b["impact"] + .01, 1), (b["impact"] + .14, .9), (b["impact"] + .36, 0)], T) + "</circle>",
+        f'<circle cx="{f2(cx)}" cy="{f2(cy)}" r="4" fill="none" stroke="#06b6d4" stroke-width="2.5" opacity="0">'
+        + animate("r", [(0, 4), (b["impact"], 4), (b["impact"] + .4, 32)], T)
+        + animate("opacity", [(0, 0), (b["impact"], 0), (b["impact"] + .01, .9), (b["impact"] + .4, 0)], T) + "</circle>",
+        # sparks flying out of the blast
+        f'<g transform="translate({f2(cx)} {f2(cy)})" opacity="0">'
+        + animate("opacity", [(0, 0), (b["impact"], 0), (b["impact"] + .01, 1), (b["impact"] + .3, 1), (b["impact"] + .42, 0)], T)
+        + f'<g>{animate("transform", [(0, ".4"), (b["impact"], ".4"), (b["impact"] + .42, "1.7")], T, transform="scale")}'
+        + "".join(f'<path d="M{f2(9 * math.cos(a))} {f2(9 * math.sin(a))}L{f2(15 * math.cos(a))} {f2(15 * math.sin(a))}" stroke="#0891b2" stroke-width="2" stroke-linecap="round"/>'
+                  for a in (math.radians(20 + 45 * i) for i in range(8)))
+        + "</g></g>",
+    ]
+    if first:
+        gx = min(max(hx - side * HAND_X, 125), W - 80)
+        out.append(f'<text x="{f2(gx)}" y="{f2(y - gs.HANDS[1] * PX - 8)}" text-anchor="middle" font-family="{INTER}" font-weight="700" '
+                   f'font-size="11" letter-spacing="1" fill="#0e7490" opacity="0">KA-ME-HA-ME-HA!'
+                   + animate("opacity", [(0, 0), (b["charge"], 0), (b["charge"] + .08, 1), (b["end"] + .5, 1), (b["end"] + .8, 0)], T) + "</text>")
+    return "".join(out)
+
+
+def render(cal):
     weeks = cal["weeks"][-53:]
     counts = sorted(d["contributionCount"] for w in weeks for d in w["contributionDays"] if d["contributionCount"])
     # quartile buckets, like GitHub's own graph
     q = [counts[int(len(counts) * f)] if counts else 1 for f in (.25, .5, .75)]
 
     def level(c):
-        if c == 0:
-            return 0
-        return 1 + sum(c > t for t in q)
-    step, cs = 11.2, 9
-    x0, y0 = 82, 86
+        return 0 if c == 0 else min(4, 1 + sum(c > t for t in q))
+    hits = {(wi, d["weekday"]): level(d["contributionCount"]) for wi, w in enumerate(weeks) for d in w["contributionDays"] if d["contributionCount"]}
+    segs, blasts, T = plan(damage_areas(hits, len(weeks)), len(weeks))
+    reveal = {c: t for b in blasts for c, t in b["reveal"].items()}
+
     cells, months = [], []
     last_month = None
     for wi, w in enumerate(weeks):
-        x = x0 + wi * step
+        x = X0 + wi * STEP
         m = date.fromisoformat(w["firstDay"]).strftime("%b")
         if m != last_month and wi < len(weeks) - 2:
             if last_month is not None or wi == 0:
-                months.append(f'<text x="{x:.1f}" y="{y0 - 10}" font-family="{INTER}" font-size="10.5" fill="{MUTED}">{m}</text>')
+                months.append(f'<text x="{x}" y="{Y0 - 10}" font-family="{INTER}" font-size="10.5" fill="{MUTED}">{m}</text>')
             last_month = m
         for d in w["contributionDays"]:
-            y = y0 + d["weekday"] * step
-            lv = min(4, level(d["contributionCount"]))
-            cells.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cs}" height="{cs}" rx="2" fill="{GREENS[lv]}" opacity="0">{fade(.2 + wi * .018, .35)}'
-                         f'<title>{d["contributionCount"]} on {d["date"]}</title></rect>')
-    days = "".join(f'<text x="36" y="{y0 + r * step + 8:.1f}" font-family="{INTER}" font-size="10.5" fill="{MUTED}">{n}</text>'
+            y = Y0 + d["weekday"] * STEP
+            c = (wi, d["weekday"])
+            tip = f'<title>{d["contributionCount"]} on {d["date"]}</title>'
+            if c in reveal:
+                t, g = reveal[c], GREENS[hits[c]]
+                fill = animate("fill", [(0, GREENS[0]), (t, GREENS[0]), (t + .05, FLASH), (t + .3, g), (T - RESET, g), (T - RESET / 2, GREENS[0])], T)
+                cells.append(f'<rect x="{x}" y="{y}" width="{CS}" height="{CS}" rx="3" fill="{GREENS[0]}">{fill}{tip}</rect>')
+            else:
+                cells.append(f'<rect x="{x}" y="{y}" width="{CS}" height="{CS}" rx="3" fill="{GREENS[0]}">{tip}</rect>')
+    days = "".join(f'<text x="36" y="{Y0 + r * STEP + 10}" font-family="{INTER}" font-size="10.5" fill="{MUTED}">{n}</text>'
                    for r, n in ((1, "Mon"), (3, "Wed"), (5, "Fri")))
-    legend_x = x0 + 53 * step - 5 * 12 - 60
-    legend = (f'<text x="{legend_x - 6:.0f}" y="{y0 + 7*step + 22:.0f}" text-anchor="end" font-family="{INTER}" font-size="10.5" fill="{MUTED}">Less</text>'
-              + "".join(f'<rect x="{legend_x + i*12:.0f}" y="{y0 + 7*step + 13:.0f}" width="{cs}" height="{cs}" rx="2" fill="{c}"/>' for i, c in enumerate(GREENS))
-              + f'<text x="{legend_x + 5*12 + 4:.0f}" y="{y0 + 7*step + 22:.0f}" font-family="{INTER}" font-size="10.5" fill="{MUTED}">More</text>')
+    ly = Y0 + 7 * STEP + 14
+    lx = X0 + len(weeks) * STEP - 4 - 5 * 15 - 30
+    legend = (f'<text x="{lx - 8}" y="{ly + 10}" text-anchor="end" font-family="{INTER}" font-size="10.5" fill="{MUTED}">Less</text>'
+              + "".join(f'<rect x="{lx + i * 15}" y="{ly}" width="{CS - 1}" height="{CS - 1}" rx="3" fill="{c}"/>' for i, c in enumerate(GREENS))
+              + f'<text x="{lx + 5 * 15 + 4}" y="{ly + 10}" font-family="{INTER}" font-size="10.5" fill="{MUTED}">More</text>')
     total = cal["totalContributions"]
-    prev = (u.get("prev") or {}).get("contributionCalendar", {}).get("totalContributions") or 0
-    change = ""
-    if prev:
-        pct = round((total - prev) / prev * 100)
-        up = pct >= 0
-        change = (f'<text x="{720 + len(f"{total:,}") * 18 + 14}" y="113" font-family="{INTER}" font-weight="600" font-size="13" fill="{"#16a34a" if up else "#dc2626"}">'
-                  f'{"↑" if up else "↓"} {abs(pct)}%</text>')
-    cols = [("commit", "Commits", cc["totalCommitContributions"]), ("pr", "Pull Requests", cc["totalPullRequestContributions"]),
-            ("issue", "Issues", cc["totalIssueContributions"])]
-    col_svg = []
-    for i, (ic, lab, val) in enumerate(cols):
-        x = (716, 806, 922)[i]
-        col_svg.append(f'<g opacity="0">{fade(1.3 + i * .15)}' + icon(ic, x, 160, 16) +
-                       f'<text x="{x + 22}" y="173" font-family="{INTER}" font-size="11.5" fill="#374151">{lab}</text>'
-                       f'<text x="{x + 22}" y="202" font-family="{INTER}" font-weight="700" font-size="18" fill="{INK}">{val:,}</text></g>')
-        if i:
-            col_svg.append(f'<rect x="{x - 12}" y="160" width="1" height="46" fill="{LINE}"/>')
     css_path = os.path.join(HERE, "activity-fonts.css")
     fonts = f"<style>{open(css_path).read()}</style>" if os.path.exists(css_path) else ""
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="GitHub activity: {total:,} contributions in the last 12 months, {cc["totalCommitContributions"]:,} commits, {cc["totalPullRequestContributions"]:,} pull requests, {cc["totalIssueContributions"]:,} issues">
+    icon = ('<svg x="36" y="24" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+            '<circle cx="9" cy="9" r="5"/><circle cx="16" cy="14" r="5"/><circle cx="9" cy="17" r="3"/></svg>')
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="GitHub activity: a pixel-art Goku fires a Kamehameha at every day with contributions, lighting up {total:,} contributions from the last 12 months">
 <title>GitHub Activity — updated {date.today().isoformat()}</title>
-<defs>{fonts}<clipPath id="frame"><rect width="{W}" height="{H}" rx="18"/></clipPath></defs>
+<defs>{fonts}<clipPath id="frame"><rect width="{W}" height="{H}" rx="18"/></clipPath>
+  <radialGradient id="ki"><stop offset="0" stop-color="#ffffff"/><stop offset=".4" stop-color="#ecfeff"/><stop offset=".7" stop-color="#67e8f9" stop-opacity=".85"/><stop offset="1" stop-color="#06b6d4" stop-opacity="0"/></radialGradient>
+  <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#22d3ee" stop-opacity="0"/><stop offset=".5" stop-color="#67e8f9"/><stop offset="1" stop-color="#22d3ee" stop-opacity="0"/></linearGradient>
+</defs>
 <g clip-path="url(#frame)">
 <rect width="{W}" height="{H}" fill="#fff"/>
-<rect x="36" y="0" width="{W-72}" height="1" fill="{LINE}"/>
-{icon("activity", 36, 24, 28, INK, 2)}
+<rect x="36" y="0" width="{W - 72}" height="1" fill="{LINE}"/>
+{icon}
 <text x="78" y="47" font-family="{INTER}" font-weight="700" font-size="22" fill="{INK}">GitHub Activity</text>
-<text x="988" y="46" text-anchor="end" font-family="{INTER}" font-size="11.5" fill="{MUTED}">updated {date.today().strftime("%d %b %Y")}</text>
+<text x="988" y="46" text-anchor="end" font-family="{INTER}" font-size="12" fill="{MUTED}"><tspan font-weight="600" fill="{INK2}">{total:,}</tspan> contributions in the last year</text>
 {"".join(months)}
 {days}
 {"".join(cells)}
+{"".join(blast(b, T, i == 0) for i, b in enumerate(blasts))}
+{goku(segs, T)}
 {legend}
-<g opacity="0">{fade(1.0)}
-  <text x="720" y="82" font-family="{INTER}" font-size="13" fill="#374151">Total Contributions</text>
-  <text x="720" y="114" font-family="{INTER}" font-weight="700" font-size="30" fill="{INK}">{total:,}</text>
-  {change}
-  <text x="720" y="134" font-family="{INTER}" font-size="11.5" fill="{MUTED}">(last 12 months)</text>
-  <rect x="720" y="146" width="268" height="1" fill="{LINE}"/>
-</g>
-{"".join(col_svg)}
+<text x="{X0}" y="{ly + 10}" font-family="{INTER}" font-size="10.5" fill="{MUTED}">updated {date.today().strftime("%d %b %Y")}</text>
 </g>
 </svg>
 '''
@@ -174,8 +313,10 @@ def render(u):
 
 if __name__ == "__main__":
     login, out = sys.argv[1], sys.argv[2]
-    data = mock() if login == "--mock" else fetch(login, os.environ["GITHUB_TOKEN"])
+    cal = mock() if login == "--mock" else fetch(login, os.environ["GITHUB_TOKEN"])
+    svg = render(cal)
+    ElementTree.fromstring(svg)  # GitHub only renders well-formed XML
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    with open(out, "w") as f:
-        f.write(render(data))
-    print(f"wrote {out}")
+    with open(out, "w", encoding="utf-8") as f:
+        f.write(svg)
+    print(f"wrote {out} ({len(svg) / 1024:.0f} KB)")

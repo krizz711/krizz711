@@ -15,6 +15,7 @@ import io
 import json
 import os
 import re
+from xml.etree import ElementTree
 from xml.sax.saxutils import escape
 
 from fontTools import subset
@@ -315,7 +316,7 @@ def skills():
                         f'<animate attributeName="opacity" values="0;1;0" dur="1.2s" begin="{3 + k * .25:.2f}s;{3 + k*.25 + 8:.2f}s" /></rect></g>')
             x += w + gap
             k += 1
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="Skills and technologies: {escape(", ".join(l for row in SKILLS for l, _ in row))}">
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="Skills and technologies: {escape(", ".join(l for row in SKILLS for l, _ in row))}">
 <title>Skills &amp; Technologies</title>
 <defs>{std_fonts()}
   <linearGradient id="shine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#eef2ff" stop-opacity="0"/><stop offset=".5" stop-color="#e0e7ff" stop-opacity=".9"/><stop offset="1" stop-color="#eef2ff" stop-opacity="0"/></linearGradient>
@@ -388,6 +389,9 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     top, foot = jpeg_b64(os.path.join(a.art, "goku_top.jpg")), jpeg_b64(os.path.join(a.art, "goku_foot.jpg"))
     for name, svg in (("hero.svg", hero(top)), ("skills.svg", skills()), ("footer.svg", footer(foot))):
+        # GitHub serves these as standalone images, so they must be well-formed XML
+        # (an undeclared xlink: prefix renders as a broken image there, though HTML embeds forgive it).
+        ElementTree.fromstring(svg)
         with open(os.path.join(a.out, name), "w") as f:
             f.write(svg)
         print(f"{name}: {len(svg)/1024:.0f} KB")

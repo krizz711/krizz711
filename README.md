@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/krizz711/krizz711/output/activity.svg" width="100%" alt="GitHub activity: contribution heatmap, total contributions, commits, pull requests and issues over the last 12 months"/>
+  <img src="https://raw.githubusercontent.com/krizz711/krizz711/output/activity.svg" width="100%" alt="GitHub activity: a pixel-art kid Goku runs across the contribution grid, firing a Kamehameha at every day with contributions to light it up"/>
 </p>
 
 <p align="center">
