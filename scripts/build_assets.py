@@ -156,7 +156,7 @@ def fade_in(begin, dur=.6, dy=8):
 
 # ───────────────────────────── hero ─────────────────────────────
 def hero(art):
-    W, H = 1024, 440
+    W, H = 1024, 372
     name = "Munal Singh"
     fonts = std_fonts([("Kaushan Script", 400, "kaushan-script/files/kaushan-script-latin-400-normal.woff2", name),
                        ("Caveat", 500, "caveat/files/caveat-latin-500-normal.woff2", ASCII),
@@ -173,24 +173,6 @@ def hero(art):
         tag_svg.append(reveal(f"tl{i}", 36, y - 15, w, 22, round(t0, 2), round(d, 2)) +
                        f'<text x="36" y="{y}" font-family="{JB}" font-size="13" fill="{INK2}" clip-path="url(#tl{i})">{escape(line)}</text>')
         t0 += d + .05
-    pills = [("brain", "AI/ML Projects", "15+"), ("repo", "Repositories", "30+"),
-             ("paper", "Research", "1 paper"), ("trophy", "Competitions", "4+")]
-    pill_svg = []
-    for i, (ic, lab, val) in enumerate(pills):
-        x = 36 + i * 146
-        pill_svg.append(f'<g opacity="0">{fade_in(3.0 + i * .12)}'
-                        f'<rect x="{x}" y="366" width="136" height="56" rx="12" fill="#fff" stroke="{LINE}"/>'
-                        + line_icon(ic, x + 13, 382, 24) +
-                        f'<text x="{x+48}" y="388" font-family="{INTER}" font-size="12" fill="#4b5563">{lab}</text>'
-                        f'<text x="{x+48}" y="410" font-family="{INTER}" font-weight="600" font-size="17" fill="{INK}">{val}</text></g>')
-    stack_icons = [devicon("python", 0, 0, 30), devicon("pytorch", 0, 0, 30), simple_icon("openai", 0, 0, 30, "#ffffff"),
-                   line_icon("db", 0, 0, 30, "#60a5fa", 2), devicon("mongodb", 0, 0, 30)]
-    stack_svg = []
-    for i, ic in enumerate(stack_icons):
-        x = 672 + i * 54
-        ic = ic.replace('x="0" y="0"', f'x="{x}" y="386"', 1)
-        stack_svg.append(f'<g opacity="0">{fade_in(3.4 + i * .1, .5, 10)}{ic}</g>')
-    stack_svg.append(f'<g opacity="0">{fade_in(3.9, .5, 10)}<path d="M{672+5*54+8},401 h16 M{672+5*54+16},393 v16" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></g>')
     wisps = []
     for i, (d, op) in enumerate([("M600,300 C640,250 610,190 660,150 C700,120 690,80 740,60", .16),
                                  ("M930,320 C900,270 940,220 905,170 C880,135 915,100 890,60", .14),
@@ -247,12 +229,6 @@ def hero(art):
   <text x="36" y="330" font-family="{CAVEAT}" font-weight="500" font-size="22" fill="{INK2}">“Better than yesterday.”</text>
 </g>
 {brush(40, 349, 118, 344, 2.9, 3)}
-{"".join(pill_svg)}
-<g opacity="0">{fade_in(3.2)}
-  <rect x="652" y="356" width="336" height="68" rx="16" fill="#0f172a"/>
-  <text x="672" y="377" font-family="{JB}" font-size="11.5" fill="#e5e7eb">Tech Stack I work with</text>
-</g>
-{"".join(stack_svg)}
 </g>
 </svg>
 '''

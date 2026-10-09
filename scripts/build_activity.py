@@ -1,9 +1,11 @@
-"""Builds the "GitHub Activity" panel of the profile README from live data.
+"""Builds the "Training Ground" panel of the profile README.
 
-A micro pixel-art kid Goku runs around the contribution grid and fires a
-Kamehameha at every day with contributions. Each blast lights up the cells in
-its damage area (up to four) in their real contribution colour. It is all SMIL,
-so it plays inside a README <img>, then resets and loops.
+A pixel-art Goku runs around a contribution-style grid, charging up in a cyan
+aura and firing a Kamehameha at random spots. Each blast lights a small damage
+area (one to four cells) in GitHub greens. The grid is decorative: the sites are
+re-rolled on every build, so it never shows the real commit history; only the
+yearly contribution total in the corner is live data. It is all SMIL, so it
+plays inside a README <img>, then resets and loops.
 
 Runs in GitHub Actions (.github/workflows/profile-assets.yml) with the
 workflow's GITHUB_TOKEN and nothing but the standard library.
@@ -17,21 +19,15 @@ import os
 import random
 import sys
 import urllib.request
-from datetime import date, timedelta
+from datetime import datetime, timezone
 from xml.etree import ElementTree
-from xml.sax.saxutils import escape
 
 import goku_sprite as gs
 
 QUERY = """
 query($login: String!) {
   user(login: $login) {
-    contributionsCollection {
-      contributionCalendar {
-        totalContributions
-        weeks { firstDay contributionDays { contributionCount date weekday } }
-      }
-    }
+    contributionsCollection { contributionCalendar { totalContributions } }
   }
 }
 """
@@ -42,9 +38,10 @@ GREENS = ["#ebedf0", "#9be9a8", "#40c463", "#30a14e", "#216e39"]
 FLASH = "#e0fbff"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-W, H = 1024, 290
+W, H = 1024, 252
 STEP, CS = 17, 13                 # grid pitch and cell size
-X0, Y0 = 82, 110                  # top-left cell
+X0, Y0 = 64, 98                   # top-left cell
+WEEKS, BLASTS = 53, 34
 PX = 1.25                         # one sprite pixel
 HAND_X = (gs.HANDS[0] - gs.W / 2) * PX
 REACH = 3 * STEP                  # how far from its target Goku fires
@@ -67,18 +64,7 @@ def fetch(login, token):
 
 
 def mock():
-    rng = random.Random(5)
-    start = date.today() - timedelta(days=364)
-    start -= timedelta(days=(start.weekday() + 1) % 7)
-    weeks, d = [], start
-    while d <= date.today():
-        days = []
-        for _ in range(7):
-            if d <= date.today():
-                days.append({"contributionCount": max(0, int(rng.gauss(-1, 4))), "date": d.isoformat(), "weekday": (d.weekday() + 1) % 7})
-            d += timedelta(days=1)
-        weeks.append({"firstDay": days[0]["date"], "contributionDays": days})
-    return {"totalContributions": sum(x["contributionCount"] for w in weeks for x in w["contributionDays"]), "weeks": weeks}
+    return {"totalContributions": 523}
 
 
 # ───────────────────────────── animation helpers ─────────────────────────────
@@ -112,23 +98,20 @@ def cell_xy(w, d):
 
 
 # ───────────────────────────── the plan ─────────────────────────────
-def damage_areas(hits, nweeks):
-    """Greedy cover of every lit cell by 3×3 blast areas holding at most four cells each."""
-    left = set(hits)
-    areas = []
-    while left:
-        best = None
-        for w in range(nweeks):
-            for d in range(7):
-                near = sorted((abs(a - w) + abs(b - d), (a, b)) for a in (w - 1, w, w + 1) for b in (d - 1, d, d + 1) if (a, b) in left)[:4]
-                if not near:
-                    continue
-                score = (len(near), (w, d) in left, -sum(n for n, _ in near), -w, -d)
-                if best is None or score > best[0]:
-                    best = (score, (w, d), [c for _, c in near])
-        _, centre, members = best
-        left -= set(members)
-        areas.append((centre, members))
+def random_areas(rng):
+    """Blast sites scattered over the grid; each lights one to four cells of its 3×3 area."""
+    lit, areas = set(), []
+    for _ in range(5000):
+        if len(areas) == BLASTS:
+            break
+        w, d = rng.randrange(1, WEEKS - 1), rng.randrange(7)
+        if any(abs(w - a) < 3 and abs(d - b) < 2 for (a, b), _ in areas):
+            continue
+        near = [(a, b) for a in (w - 1, w, w + 1) for b in (d - 1, d, d + 1) if 0 <= b < 7 and (a, b) != (w, d) and (a, b) not in lit]
+        rng.shuffle(near)
+        members = [(w, d)] + near[:rng.choice((0, 1, 2, 2, 3, 3))]
+        lit |= set(members)
+        areas.append(((w, d), {c: rng.choices((1, 2, 3, 4), (4, 3, 2, 1))[0] for c in members}))
     return areas
 
 
@@ -139,8 +122,8 @@ def stand(centre, side):
     return hx - side * HAND_X, cy, hx
 
 
-def plan(areas, nweeks):
-    """Order the blasts nearest-first and lay out the whole timeline."""
+def plan(areas, rng):
+    """Hop between blast sites in a random order (never too far at once) and lay out the timeline."""
     pos = (X0 + 30, Y0 + 3 * STEP + CS / 2)
     t, facing = INTRO, 1
     segs = [(0, INTRO, "idle", 1, pos, pos)]
@@ -149,11 +132,11 @@ def plan(areas, nweeks):
     while todo:
         options = []
         for i, (centre, _) in enumerate(todo):
-            for side in (1, -1):
-                gx, gy, _ = stand(centre, side)
-                if X0 + 6 <= gx <= W - 34:  # clear of the day labels and the panel edge
-                    options.append((math.dist(pos, (gx, gy)), i, side))
-        dist, i, side = min(options)
+            sides = [(math.dist(pos, stand(centre, side)[:2]), i, side) for side in (1, -1)
+                     if 32 <= stand(centre, side)[0] <= W - 32]  # stay inside the panel
+            if sides:
+                options.append(min(sides))
+        dist, i, side = rng.choice([o for o in options if o[0] < 360] or [min(options)])
         centre, members = todo.pop(i)
         gx, gy, hx = stand(centre, side)
         if dist > 1:
@@ -168,7 +151,7 @@ def plan(areas, nweeks):
         fire = t + CHARGE
         impact = fire + EXTEND
         blasts.append({"side": side, "hx": hx, "y": gy, "centre": cell_xy(*centre), "charge": t, "fire": fire,
-                       "impact": impact, "end": impact + HOLD, "reveal": {c: impact + .035 * (abs(c[0] - centre[0]) + abs(c[1] - centre[1])) for c in members}})
+                       "impact": impact, "end": impact + HOLD, "reveal": {c: (impact + .035 * (abs(c[0] - centre[0]) + abs(c[1] - centre[1])), lv) for c, lv in members.items()}})
         t = fire + EXTEND + HOLD + FADE
     segs.append((t, t + VICTORY + RESET, "win", facing, pos, pos))
     return segs, blasts, t + VICTORY + RESET
@@ -184,10 +167,29 @@ def sprite_defs():
         return f'<g id="{name}">{gs.to_svg(rows, PX, -len(rows[0]) / 2 * PX, -len(rows) / 2 * PX)}</g>'
     beam = gs.beam(BEAM_LEN)
     out.append(f'<g id="k-beam">{gs.to_svg(beam, PX, 0, -len(beam) / 2 * PX)}</g>')
+    out.append(AURA_DEFS)
     out += [centred("k-head1", gs.blob(7, 9, 0)), centred("k-head2", gs.blob(7, 9, .35)),
             centred("k-orb1", gs.blob(3)), centred("k-orb2", gs.blob(4, 7)),
             centred("k-burst1", gs.burst(7)), centred("k-burst2", gs.burst(11)), centred("k-ring", gs.burst(14, True))]
     return "".join(out)
+
+
+AURA_DEFS = (
+    # a cyan glow hugging Goku's silhouette, flickering like a ki aura
+    '<filter id="aura" x="-60%" y="-40%" width="220%" height="180%">'
+    '<feFlood flood-color="#22d3ee" flood-opacity=".8" result="c">'
+    '<animate attributeName="flood-opacity" values=".5;.95;.5" dur=".3s" repeatCount="indefinite"/></feFlood>'
+    '<feComposite in="c" in2="SourceAlpha" operator="in" result="sil"/>'
+    '<feMorphology in="sil" operator="dilate" radius="1.6" result="fat"/>'
+    '<feGaussianBlur in="fat" stdDeviation="3.2" result="glow"/>'
+    '<feMerge><feMergeNode in="glow"/><feMergeNode in="SourceGraphic"/></feMerge></filter>'
+    # a soft bloom for the beam, the ki ball and the explosions
+    '<filter id="kiglow" x="-50%" y="-120%" width="200%" height="340%">'
+    '<feGaussianBlur in="SourceGraphic" stdDeviation="2.6" result="b"/>'
+    '<feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>'
+    '<radialGradient id="flame" cx=".5" cy=".62" r=".6"><stop offset="0" stop-color="#ecfeff" stop-opacity=".9"/>'
+    '<stop offset=".55" stop-color="#22d3ee" stop-opacity=".55"/><stop offset="1" stop-color="#06b6d4" stop-opacity="0"/></radialGradient>'
+)
 
 
 def flicker(a, b, period=".24s"):
@@ -195,6 +197,11 @@ def flicker(a, b, period=".24s"):
     anim = '<animate attributeName="opacity" values="{}" dur="' + period + '" calcMode="discrete" repeatCount="indefinite"/>'
     return (f'<g>{anim.format("1;0")}<use xlink:href="#{a}"/></g>'
             f'<g opacity="0">{anim.format("0;1")}<use xlink:href="#{b}"/></g>')
+
+
+_r = random.Random(11)
+SPARKS = [(_r.uniform(-20, 18), _r.choice((2, 2.5, 3)), _r.choice(("#67e8f9", "#a5f3fc", "#22d3ee")),
+           _r.uniform(.8, 1.4), _r.uniform(0, 1.4)) for _ in range(12)]
 
 
 def goku(segs, T):
@@ -208,17 +215,29 @@ def goku(segs, T):
         pts = [(t0, 1 if s == name else 0) for t0, _, s, *_ in segs]
         return f'<g opacity="0">{animate("opacity", pts, T, discrete=True)}{body}</g>'
 
-    aura = (f'<ellipse cx="0" cy="{f2(-4 * PX)}" rx="{f2(17 * PX)}" ry="{f2(25 * PX)}" fill="#67e8f9" opacity=".2" shape-rendering="auto">'
-            f'<animate attributeName="opacity" values=".1;.3;.1" dur=".16s" repeatCount="indefinite"/></ellipse>')
+    top, bot = -gs.HANDS[1] * PX - 14, (gs.H - gs.HANDS[1]) * PX + 4
+    mid, half = (top + bot) / 2, 24 * PX
+    flame = (f'M0 {f2(top)} C{f2(half * .6)} {f2(top + 14)} {f2(half)} {f2(mid - 10)} {f2(half * .9)} {f2(mid + 12)} '
+             f'C{f2(half * .8)} {f2(bot - 4)} {f2(half * .4)} {f2(bot)} 0 {f2(bot)} '
+             f'C{f2(-half * .4)} {f2(bot)} {f2(-half * .8)} {f2(bot - 4)} {f2(-half * .9)} {f2(mid + 12)} '
+             f'C{f2(-half)} {f2(mid - 10)} {f2(-half * .6)} {f2(top + 14)} 0 {f2(top)}Z')
+    aura = (f'<g shape-rendering="auto"><path d="{flame}" fill="url(#flame)" opacity=".75">'
+            f'<animateTransform attributeName="transform" type="scale" values="1 1;1.06 1.1;.97 1.03;1 1" dur=".24s" repeatCount="indefinite"/>'
+            f'<animate attributeName="opacity" values=".55;.9;.55" dur=".18s" repeatCount="indefinite"/></path></g>')
+    sparks = "".join(
+        f'<rect x="{f2(x)}" y="0" width="{f2(sz)}" height="{f2(sz)}" fill="{c}" opacity="0">'
+        f'<animate attributeName="y" values="{f2(bot - 6)};{f2(top + 6)}" dur="{d:.2f}s" begin="{b0:.2f}s" repeatCount="indefinite"/>'
+        f'<animate attributeName="opacity" values="0;.95;0" dur="{d:.2f}s" begin="{b0:.2f}s" repeatCount="indefinite"/></rect>'
+        for x, sz, c, d, b0 in SPARKS)
     return (f'<g>{animate("transform", pos, T, transform="translate")}{animate("opacity", teleport, T)}'
             f'<ellipse cx="0" cy="{f2((gs.H - gs.HANDS[1]) * PX + .5)}" rx="{f2(11 * PX)}" ry="{f2(2.2 * PX)}" fill="{INK}" opacity=".16"/>'
-            f'<g>{animate("transform", facing, T, discrete=True, transform="scale")}'
-            + state("idle", '<use xlink:href="#g-run2"/>')
-            + state("run", flicker("g-run1", "g-run2"))
+            f'<g filter="url(#aura)">{animate("transform", facing, T, discrete=True, transform="scale")}'
+            + state("idle", '<use xlink:href="#g-win"/>')
+            + state("run", flicker("g-run1", "g-run2", ".26s"))
             + state("charge", aura + '<use xlink:href="#g-charge"/>')
-            + state("fire", '<use xlink:href="#g-fire"/>')
+            + state("fire", aura + '<use xlink:href="#g-fire"/>')
             + state("win", '<use xlink:href="#g-win"/>')
-            + "</g></g>")
+            + f'</g><g shape-rendering="auto">{sparks}</g></g>')
 
 
 def blast(b, T, i):
@@ -234,26 +253,25 @@ def blast(b, T, i):
         return animate("opacity", [(0, 0), (t0, 1), (t1, 0)], T, discrete=True)
     orb = (
         # the ki ball crackling in his cupped hands while Goku charges (drawn over him)
-        f'<g transform="translate({f2(ch_x)} {f2(ch_y)})" opacity="0">'
+        f'<g transform="translate({f2(ch_x)} {f2(ch_y)})" opacity="0" filter="url(#kiglow)">'
         + animate("opacity", [(0, 0), (b["charge"], 0), (b["charge"] + .01, 1), (b["fire"], 1), (b["fire"] + .01, 0)], T)
         + flicker("k-orb1", "k-orb2", ".1s") + "</g>")
     out = [
         # the beam: revealed pixel by pixel behind its head, drawn facing right and mirrored for left-facing blasts
-        f'<g transform="translate({f2(hx)} {f2(y)}) scale({side} 1)" opacity="0">{animate("opacity", show, T)}'
+        f'<g transform="translate({f2(hx)} {f2(y)}) scale({side} 1)" opacity="0" filter="url(#kiglow)">{animate("opacity", show, T)}'
         f'<clipPath id="kc{i}"><rect x="-2" y="-12" width="0" height="24">'
         + animate("width", [(0, 0), (b["fire"], 0), (imp, f2(length + 2))], T) + "</rect></clipPath>"
         f'<g clip-path="url(#kc{i})"><use xlink:href="#k-beam"/></g>'
-        '<use xlink:href="#k-orb2"/>'
         f'<g>{animate("transform", [(0, "0 0"), (b["fire"], "0 0"), (imp, f"{f2(length)} 0")], T, transform="translate")}'
         + flicker("k-head1", "k-head2", ".12s") + "</g></g>",
         # the explosion over the damage area: flash, bigger flash, ring of sparks
-        f'<g transform="translate({f2(cx)} {f2(cy)})">'
+        f'<g transform="translate({f2(cx)} {f2(cy)})" filter="url(#kiglow)">'
         f'<use xlink:href="#k-burst1" opacity="0">{blink(imp, imp + .08)}</use>'
         f'<use xlink:href="#k-burst2" opacity="0">{blink(imp + .08, imp + .2)}</use>'
         f'<use xlink:href="#k-ring" opacity="0">{blink(imp + .2, imp + .34)}</use></g>',
     ]
     if i == 0:
-        gx = min(max(hx - side * HAND_X, 125), W - 80)
+        gx = min(max(hx - side * HAND_X, 90), W - 90)
         out.append(f'<text x="{f2(gx)}" y="{f2(y - gs.HANDS[1] * PX - 8)}" text-anchor="middle" font-family="{INTER}" font-weight="700" '
                    f'font-size="11" letter-spacing="1" fill="#1d4ed8" opacity="0">KA-ME-HA-ME-HA!'
                    + animate("opacity", [(0, 0), (b["charge"], 0), (b["charge"] + .08, 1), (b["end"] + .5, 1), (b["end"] + .8, 0)], T) + "</text>")
@@ -261,51 +279,30 @@ def blast(b, T, i):
 
 
 def render(cal):
-    weeks = cal["weeks"][-53:]
-    counts = sorted(d["contributionCount"] for w in weeks for d in w["contributionDays"] if d["contributionCount"])
-    # quartile buckets, like GitHub's own graph
-    q = [counts[int(len(counts) * f)] if counts else 1 for f in (.25, .5, .75)]
-
-    def level(c):
-        return 0 if c == 0 else min(4, 1 + sum(c > t for t in q))
-    hits = {(wi, d["weekday"]): level(d["contributionCount"]) for wi, w in enumerate(weeks) for d in w["contributionDays"] if d["contributionCount"]}
-    segs, blasts, T = plan(damage_areas(hits, len(weeks)), len(weeks))
-    reveal = {c: t for b in blasts for c, t in b["reveal"].items()}
+    now = datetime.now(timezone.utc)
+    rng = random.Random(f"{now.date()}-{now.hour // 12}")   # a new battle every build
+    segs, blasts, T = plan(random_areas(rng), rng)
+    reveal = {c: v for b in blasts for c, v in b["reveal"].items()}
     fx = [blast(b, T, i) for i, b in enumerate(blasts)]
 
-    cells, months = [], []
-    last_month = None
-    for wi, w in enumerate(weeks):
-        x = X0 + wi * STEP
-        m = date.fromisoformat(w["firstDay"]).strftime("%b")
-        if m != last_month and wi < len(weeks) - 2:
-            if last_month is not None or wi == 0:
-                months.append(f'<text x="{x}" y="{Y0 - 10}" font-family="{INTER}" font-size="10.5" fill="{MUTED}">{m}</text>')
-            last_month = m
-        for d in w["contributionDays"]:
-            y = Y0 + d["weekday"] * STEP
-            c = (wi, d["weekday"])
-            tip = f'<title>{d["contributionCount"]} on {d["date"]}</title>'
-            if c in reveal:
-                t, g = reveal[c], GREENS[hits[c]]
+    cells = []
+    for w in range(WEEKS):
+        for d in range(7):
+            x, y = X0 + w * STEP, Y0 + d * STEP
+            if (w, d) in reveal:
+                t, lv = reveal[(w, d)]
+                g = GREENS[lv]
                 fill = animate("fill", [(0, GREENS[0]), (t, GREENS[0]), (t + .05, FLASH), (t + .3, g), (T - RESET, g), (T - RESET / 2, GREENS[0])], T)
-                cells.append(f'<rect x="{x}" y="{y}" width="{CS}" height="{CS}" rx="3" fill="{GREENS[0]}">{fill}{tip}</rect>')
+                cells.append(f'<rect x="{x}" y="{y}" width="{CS}" height="{CS}" rx="3" fill="{GREENS[0]}">{fill}</rect>')
             else:
-                cells.append(f'<rect x="{x}" y="{y}" width="{CS}" height="{CS}" rx="3" fill="{GREENS[0]}">{tip}</rect>')
-    days = "".join(f'<text x="36" y="{Y0 + r * STEP + 10}" font-family="{INTER}" font-size="10.5" fill="{MUTED}">{n}</text>'
-                   for r, n in ((1, "Mon"), (3, "Wed"), (5, "Fri")))
-    ly = Y0 + 7 * STEP + 28
-    lx = X0 + len(weeks) * STEP - 4 - 5 * 15 - 30
-    legend = (f'<text x="{lx - 8}" y="{ly + 10}" text-anchor="end" font-family="{INTER}" font-size="10.5" fill="{MUTED}">Less</text>'
-              + "".join(f'<rect x="{lx + i * 15}" y="{ly}" width="{CS - 1}" height="{CS - 1}" rx="3" fill="{c}"/>' for i, c in enumerate(GREENS))
-              + f'<text x="{lx + 5 * 15 + 4}" y="{ly + 10}" font-family="{INTER}" font-size="10.5" fill="{MUTED}">More</text>')
+                cells.append(f'<rect x="{x}" y="{y}" width="{CS}" height="{CS}" rx="3" fill="{GREENS[0]}"/>')
     total = cal["totalContributions"]
     css_path = os.path.join(HERE, "activity-fonts.css")
     fonts = f"<style>{open(css_path).read()}</style>" if os.path.exists(css_path) else ""
     icon = ('<svg x="36" y="24" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
-            '<circle cx="9" cy="9" r="5"/><circle cx="16" cy="14" r="5"/><circle cx="9" cy="17" r="3"/></svg>')
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="GitHub activity: a pixel-art Goku fires a Kamehameha at every day with contributions, lighting up {total:,} contributions from the last 12 months">
-<title>GitHub Activity — updated {date.today().isoformat()}</title>
+            '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>')
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="Training Ground: a pixel-art Goku charges up in a cyan aura and fires Kamehameha blasts across a decorative grid. {total:,} GitHub contributions in the last year.">
+<title>Training Ground</title>
 <defs>{fonts}<clipPath id="frame"><rect width="{W}" height="{H}" rx="18"/></clipPath>
   {sprite_defs()}
 </defs>
@@ -313,16 +310,12 @@ def render(cal):
 <rect width="{W}" height="{H}" fill="#fff"/>
 <rect x="36" y="0" width="{W - 72}" height="1" fill="{LINE}"/>
 {icon}
-<text x="78" y="47" font-family="{INTER}" font-weight="700" font-size="22" fill="{INK}">GitHub Activity</text>
+<text x="78" y="47" font-family="{INTER}" font-weight="700" font-size="22" fill="{INK}">Training Ground</text>
 <text x="988" y="46" text-anchor="end" font-family="{INTER}" font-size="12" fill="{MUTED}"><tspan font-weight="600" fill="{INK2}">{total:,}</tspan> contributions in the last year</text>
-{"".join(months)}
-{days}
 {"".join(cells)}
 <g shape-rendering="crispEdges">{"".join(under for under, _ in fx)}
 {goku(segs, T)}
 {"".join(over for _, over in fx)}</g>
-{legend}
-<text x="{X0}" y="{ly + 10}" font-family="{INTER}" font-size="10.5" fill="{MUTED}">updated {date.today().strftime("%d %b %Y")}</text>
 </g>
 </svg>
 '''

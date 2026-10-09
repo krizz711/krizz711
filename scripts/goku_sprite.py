@@ -15,7 +15,7 @@ PALETTE = {
 }
 
 W, H = 33, 46
-HANDS = (32.5, 25.5)      # fire frame: front edge and centre of the stacked palms
+HANDS = (30.5, 25.5)      # fire frame: front edge and centre of the hand
 CHARGE_HANDS = (8, 33)    # charge frame: the hands cupped at the back hip
 
 SPRITE = [
@@ -98,9 +98,8 @@ def _fire():
         _erase(g, row, c0, c1)
     _paint(g, 27, 9, "kkk")
     _paint(g, 35, 9, "k")
-    # the near arm thrust out, palms stacked
-    for row, s in ((21, "......kkk.."), (22, ".....kPPPk."), (23, ".kkkkkPPPPk"), (24, ".BBPPBPPPPk"), (25, ".BBPPBkkkPk"),
-                   (26, ".BBPPBPPPPk"), (27, ".kkkkkPPPPk"), (28, ".....kPPPk."), (29, "......kkk..")):
+    # the near arm thrust out, ending in a plain open hand
+    for row, s in ((23, ".kkkkkkkk"), (24, ".BBPPBPPk"), (25, ".BBPPBPPk"), (26, ".BBPPBPPk"), (27, ".kkkkkkkk")):
         _paint(g, row, 22, s)
     return g
 
@@ -118,21 +117,22 @@ def _charge():
     return g
 
 
+def _lift(g, rows, c0, c1, up, fwd):
+    """Raise one boot `up` rows and push it `fwd` columns forward, drawn over the trouser leg."""
+    boot = [g[r][c0:c1 + 1] for r in rows]
+    for r in rows:
+        _erase(g, r, c0, c1)
+    for i, row in enumerate(boot):
+        _paint(g, rows[0] - up + i, c0 + fwd, "".join(row))
+
+
 def _run(step):
-    """Two running frames: the feet trade places, one lifted, one planted."""
+    """Two running frames: one boot high and forward, the other planted, then swap."""
     g = _grid()
     if step:
-        left = [row[6:13] for row in g[40:46]]
-        for r in range(40, 46):
-            _erase(g, r, 6, 12)
-        for i, row in enumerate(left):
-            _paint(g, 38 + i, 6, "".join(row))
-        right = [row[17:26] for row in g[40:45]]
-        for r in range(40, 45):
-            _erase(g, r, 17, 25)
-        _paint(g, 40, 17, "kOOOOk")
-        for i, row in enumerate(right):
-            _paint(g, 41 + i, 17, "".join(row))
+        _lift(g, range(40, 45), 17, 24, 3, 1)
+    else:
+        _lift(g, range(40, 46), 6, 13, 3, 1)
     return g
 
 
