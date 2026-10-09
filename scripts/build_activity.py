@@ -1,7 +1,7 @@
 """Builds the "Training Ground" panel of the profile README.
 
-A pixel-art Goku runs around a contribution-style grid, charging up in a cyan
-aura and firing a Kamehameha at random spots. Each blast lights a small damage
+A pixel-art Goku sweeps left to right across a contribution-style grid in a
+cyan aura, stopping to fire a Kamehameha at random spots. Each blast lights a small damage
 area (one to four cells) in GitHub greens. The grid is decorative: the sites are
 re-rolled on every build, so it never shows the real commit history; only the
 yearly contribution total in the corner is live data. It is all SMIL, so it
@@ -46,7 +46,7 @@ PX = 1.25                         # one sprite pixel
 HAND_X = (gs.HANDS[0] - gs.W / 2) * PX
 REACH = 3 * STEP                  # how far from its target Goku fires
 BEAM_LEN = math.ceil(REACH / PX) + 2   # the pixel beam, in sprite pixels
-SPEED = 520                       # running speed, px/s
+SPEED = 400                       # running speed, px/s
 CHARGE, EXTEND, HOLD, FADE = .24, .12, .14, .1
 INTRO, VICTORY, RESET = .5, 2.2, .7
 
@@ -104,7 +104,7 @@ def random_areas(rng):
     for _ in range(5000):
         if len(areas) == BLASTS:
             break
-        w, d = rng.randrange(1, WEEKS - 1), rng.randrange(7)
+        w, d = rng.randrange(3, WEEKS - 1), rng.randrange(7)   # leave room on the left to fire rightwards
         if any(abs(w - a) < 3 and abs(d - b) < 2 for (a, b), _ in areas):
             continue
         near = [(a, b) for a in (w - 1, w, w + 1) for b in (d - 1, d, d + 1) if 0 <= b < 7 and (a, b) != (w, d) and (a, b) not in lit]
@@ -122,38 +122,29 @@ def stand(centre, side):
     return hx - side * HAND_X, cy, hx
 
 
-def plan(areas, rng):
-    """Hop between blast sites in a random order (never too far at once) and lay out the timeline."""
-    pos = (X0 + 30, Y0 + 3 * STEP + CS / 2)
-    t, facing = INTRO, 1
+def plan(areas):
+    """Sweep the grid left to right, facing right, blasting each site in turn, and lay out the timeline."""
+    pos = (40, Y0 + 3 * STEP + CS / 2)
+    t = INTRO
     segs = [(0, INTRO, "idle", 1, pos, pos)]
     blasts = []
-    todo = list(areas)
-    while todo:
-        options = []
-        for i, (centre, _) in enumerate(todo):
-            sides = [(math.dist(pos, stand(centre, side)[:2]), i, side) for side in (1, -1)
-                     if 32 <= stand(centre, side)[0] <= W - 32]  # stay inside the panel
-            if sides:
-                options.append(min(sides))
-        dist, i, side = rng.choice([o for o in options if o[0] < 360] or [min(options)])
-        centre, members = todo.pop(i)
-        gx, gy, hx = stand(centre, side)
+    for centre, members in sorted(areas):
+        gx, gy, hx = stand(centre, 1)
+        dist = math.dist(pos, (gx, gy))
         if dist > 1:
             run = .08 + dist / SPEED
-            if abs(gx - pos[0]) > 2:
-                facing = 1 if gx > pos[0] else -1
-            segs.append((t, t + run, "run", facing, pos, (gx, gy)))
+            segs.append((t, t + run, "run", 1, pos, (gx, gy)))
             t += run
-        pos, facing = (gx, gy), side
-        segs.append((t, t + CHARGE, "charge", side, pos, pos))
-        segs.append((t + CHARGE, t + CHARGE + EXTEND + HOLD + FADE, "fire", side, pos, pos))
+        pos = (gx, gy)
+        segs.append((t, t + CHARGE, "charge", 1, pos, pos))
+        segs.append((t + CHARGE, t + CHARGE + EXTEND + HOLD + FADE, "fire", 1, pos, pos))
         fire = t + CHARGE
         impact = fire + EXTEND
-        blasts.append({"side": side, "hx": hx, "y": gy, "centre": cell_xy(*centre), "charge": t, "fire": fire,
-                       "impact": impact, "end": impact + HOLD, "reveal": {c: (impact + .035 * (abs(c[0] - centre[0]) + abs(c[1] - centre[1])), lv) for c, lv in members.items()}})
+        blasts.append({"side": 1, "hx": hx, "y": gy, "centre": cell_xy(*centre), "charge": t, "fire": fire,
+                       "impact": impact, "end": impact + HOLD,
+                       "reveal": {c: (impact + .035 * (abs(c[0] - centre[0]) + abs(c[1] - centre[1])), lv) for c, lv in members.items()}})
         t = fire + EXTEND + HOLD + FADE
-    segs.append((t, t + VICTORY + RESET, "win", facing, pos, pos))
+    segs.append((t, t + VICTORY + RESET, "win", 1, pos, pos))
     return segs, blasts, t + VICTORY + RESET
 
 
@@ -209,8 +200,9 @@ def goku(segs, T):
     facing = [(t0, f"{side} 1") for t0, _, _, side, *_ in segs]
     teleport = [(0, 0), (.08, 1), (.14, .25), (.22, 1), (T - .62, 1), (T - .56, .25), (T - .5, 1), (T - .42, 0)]
 
-    def state(name, body):
-        pts = [(t0, 1 if s == name else 0) for t0, _, s, *_ in segs]
+    def state(names, body):
+        names = (names,) if isinstance(names, str) else names
+        pts = [(t0, 1 if s in names else 0) for t0, _, s, *_ in segs]
         return f'<g opacity="0">{animate("opacity", pts, T, discrete=True)}{body}</g>'
 
     top, bot = -gs.HANDS[1] * PX - 14, (gs.H - gs.HANDS[1]) * PX + 4
@@ -222,14 +214,15 @@ def goku(segs, T):
         for x, sz, c, d, b0 in SPARKS)
     return (f'<g>{animate("transform", pos, T, transform="translate")}{animate("opacity", teleport, T)}'
             f'<ellipse cx="0" cy="{f2((gs.H - gs.HANDS[1]) * PX + .5)}" rx="{f2(11 * PX)}" ry="{f2(2.2 * PX)}" fill="{INK}" opacity=".16"/>'
-            f'<g filter="url(#aura)">{turn}'
+            + state(("idle", "run", "win"), f'<g shape-rendering="auto">{sparks}</g>')
+            + f'<g filter="url(#aura)">{turn}'
             + state("idle", '<use xlink:href="#g-win"/>')
             + state("run", flicker("g-run1", "g-run2", ".26s"))
             + state("win", '<use xlink:href="#g-win"/>')
             + f'</g><g>{turn}'
             + state("charge", '<use xlink:href="#g-charge"/>')
             + state("fire", '<use xlink:href="#g-fire"/>')
-            + f'</g><g shape-rendering="auto">{sparks}</g></g>')
+            + '</g></g>')
 
 
 def blast(b, T, i):
@@ -273,7 +266,7 @@ def blast(b, T, i):
 def render(cal):
     now = datetime.now(timezone.utc)
     rng = random.Random(f"{now.date()}-{now.hour // 12}")   # a new battle every build
-    segs, blasts, T = plan(random_areas(rng), rng)
+    segs, blasts, T = plan(random_areas(rng))
     reveal = {c: v for b in blasts for c, v in b["reveal"].items()}
     fx = [blast(b, T, i) for i, b in enumerate(blasts)]
 
