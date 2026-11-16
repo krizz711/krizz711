@@ -13,13 +13,15 @@
 <h3 align="center">🤝 Let's connect</h3>
 
 <p align="center">
-  🏅 <a href="https://www.kaggle.com/munalsingh"><b>Kaggle</b></a>
-  &nbsp;&nbsp;·&nbsp;&nbsp;
-  💼 <a href="https://www.linkedin.com/in/munal-singh-a375a4307"><b>LinkedIn</b></a>
-  &nbsp;&nbsp;·&nbsp;&nbsp;
-  🧩 <a href="https://leetcode.com/u/t0VTXXovHa/"><b>LeetCode</b></a>
-  &nbsp;&nbsp;·&nbsp;&nbsp;
-  ✉️ <a href="mailto:munalmax777@gmail.com"><b>munalmax777@gmail.com</b></a>
+  <a href="https://www.kaggle.com/munalsingh"><img src="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/connect/kaggle.svg" height="40" alt="Kaggle"/></a>
+  &nbsp;
+  <a href="https://www.linkedin.com/in/munal-singh-a375a4307"><img src="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/connect/linkedin.svg" height="40" alt="LinkedIn"/></a>
+  &nbsp;
+  <a href="https://leetcode.com/u/t0VTXXovHa/"><img src="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/connect/leetcode.svg" height="40" alt="LeetCode"/></a>
+  &nbsp;
+  <a href="mailto:munalmax777@gmail.com"><img src="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/connect/email.svg" height="40" alt="Email munalmax777@gmail.com"/></a>
+  &nbsp;
+  <a href="https://www.chess.com/member/munalsingh"><img src="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/connect/chess.svg" height="40" alt="Chess.com"/></a>
 </p>
 
 <p align="center"><sub>Open to internships, research collaborations and great conversations.</sub></p>

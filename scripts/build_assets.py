@@ -327,12 +327,48 @@ def skills():
 '''
 
 
+# ───────────────────────────── connect badges ─────────────────────────────
+# LinkedIn is no longer in simple-icons (removed at LinkedIn's request), so its "in" mark is drawn here.
+LINKEDIN_IN = ('<rect x="2" y="2" width="20" height="20" rx="3.6" fill="#0A66C2"/>'
+               '<circle cx="7.4" cy="7.2" r="1.6" fill="#fff"/>'
+               '<rect x="6.1" y="9.6" width="2.6" height="8.4" rx=".4" fill="#fff"/>'
+               '<path d="M10.6,9.6h2.5v1.2c.5-.9 1.5-1.45 2.75-1.45 2.05 0 2.95 1.3 2.95 3.5V18h-2.6v-4.6'
+               'c0-1.1-.4-1.75-1.35-1.75-1.05 0-1.65.75-1.65 1.9V18h-2.6Z" fill="#fff"/>')
+
+# simple-icons' Kaggle icon is the full wordmark, unreadable at 20 px, so its blue "k" is drawn too.
+KAGGLE_K = ('<rect x="5.2" y="2" width="3.6" height="20" rx="1.2" fill="#20BEFF"/>'
+            '<path d="M18.2,8.6 L10.6,15.2 M12.9,13.4 L18.6,21" fill="none" stroke="#20BEFF" stroke-width="3.4" '
+            'stroke-linecap="round" stroke-linejoin="round"/>')
+DRAWN = {"kaggle": KAGGLE_K, "linkedin": LINKEDIN_IN}
+
+CONNECT = [  # file name, label, simple-icons slug (None = drawn above, keyed by file name)
+    ("kaggle", "Kaggle", None),
+    ("linkedin", "LinkedIn", None),
+    ("leetcode", "LeetCode", "leetcode"),
+    ("email", "Email", "gmail"),
+    ("chess", "Chess.com", "chessdotcom"),
+]
+
+
+def connect_badge(fname, label, slug):
+    """A white pill with the brand's own logo, sized to its label."""
+    size, pad_l, gap, pad_r, H = 14, 14, 10, 18, 40
+    W = round(pad_l + 20 + gap + text_width(label, size) * 1.06 + pad_r)
+    icon = (simple_icon(slug, pad_l, 10, 20) if slug else
+            f'<svg x="{pad_l}" y="10" width="20" height="20" viewBox="0 0 24 24">{DRAWN[fname]}</svg>')
+    fonts = font_css([("Inter", 600, "inter/files/inter-latin-600-normal.woff2", label)])
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="{escape(label)}">'
+            f'<title>{escape(label)}</title><defs>{fonts}</defs>'
+            f'<rect x=".5" y=".5" width="{W - 1}" height="{H - 1}" rx="{(H - 1) / 2}" fill="#fff" stroke="#e5e7eb"/>'
+            f'{icon}<text x="{pad_l + 20 + gap}" y="25.2" font-family="{INTER}" font-weight="600" font-size="{size}" fill="{INK}">{escape(label)}</text></svg>')
+
+
 def main():
     global NM
     ap = argparse.ArgumentParser()
     ap.add_argument("--node-modules", required=True)
     ap.add_argument("--out", default="assets")
-    ap.add_argument("--only", nargs="*", help="build just these panels, e.g. --only hero")
+    ap.add_argument("--only", nargs="*", help="build just these panels, e.g. --only hero connect")
     a = ap.parse_args()
     NM = a.node_modules
     os.makedirs(a.out, exist_ok=True)
@@ -346,6 +382,14 @@ def main():
         with open(os.path.join(a.out, name), "w", encoding="utf-8") as f:
             f.write(svg)
         print(f"{name}: {len(svg)/1024:.0f} KB")
+    if not a.only or "connect" in a.only:
+        os.makedirs(os.path.join(a.out, "connect"), exist_ok=True)
+        for fname, label, slug in CONNECT:
+            svg = connect_badge(fname, label, slug)
+            ElementTree.fromstring(svg)
+            with open(os.path.join(a.out, "connect", f"{fname}.svg"), "w", encoding="utf-8") as f:
+                f.write(svg)
+            print(f"connect/{fname}.svg: {len(svg)/1024:.1f} KB")
 
 
 if __name__ == "__main__":
