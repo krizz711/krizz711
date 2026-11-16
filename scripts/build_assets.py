@@ -327,40 +327,92 @@ def skills():
 '''
 
 
-# ───────────────────────────── connect badges ─────────────────────────────
+# ───────────────────────────── connect section ─────────────────────────────
 # LinkedIn is no longer in simple-icons (removed at LinkedIn's request), so its "in" mark is drawn here.
 LINKEDIN_IN = ('<rect x="2" y="2" width="20" height="20" rx="3.6" fill="#0A66C2"/>'
                '<circle cx="7.4" cy="7.2" r="1.6" fill="#fff"/>'
                '<rect x="6.1" y="9.6" width="2.6" height="8.4" rx=".4" fill="#fff"/>'
                '<path d="M10.6,9.6h2.5v1.2c.5-.9 1.5-1.45 2.75-1.45 2.05 0 2.95 1.3 2.95 3.5V18h-2.6v-4.6'
                'c0-1.1-.4-1.75-1.35-1.75-1.05 0-1.65.75-1.65 1.9V18h-2.6Z" fill="#fff"/>')
-
-# simple-icons' Kaggle icon is the full wordmark, unreadable at 20 px, so its blue "k" is drawn too.
+# simple-icons' Kaggle icon is the full wordmark, unreadable at icon size, so its blue "k" is drawn too.
 KAGGLE_K = ('<rect x="5.2" y="2" width="3.6" height="20" rx="1.2" fill="#20BEFF"/>'
             '<path d="M18.2,8.6 L10.6,15.2 M12.9,13.4 L18.6,21" fill="none" stroke="#20BEFF" stroke-width="3.4" '
             'stroke-linecap="round" stroke-linejoin="round"/>')
-DRAWN = {"kaggle": KAGGLE_K, "linkedin": LINKEDIN_IN}
+DRAWN = {"kaggle": (KAGGLE_K, "#20BEFF"), "linkedin": (LINKEDIN_IN, "#0A66C2")}
 
 CONNECT = [  # file name, label, simple-icons slug (None = drawn above, keyed by file name)
     ("kaggle", "Kaggle", None),
     ("linkedin", "LinkedIn", None),
     ("leetcode", "LeetCode", "leetcode"),
+    ("discord", "Discord", "discord"),
     ("email", "Email", "gmail"),
     ("chess", "Chess.com", "chessdotcom"),
 ]
 
 
-def connect_badge(fname, label, slug):
-    """A white pill with the brand's own logo, sized to its label."""
-    size, pad_l, gap, pad_r, H = 14, 14, 10, 18, 40
-    W = round(pad_l + 20 + gap + text_width(label, size) * 1.06 + pad_r)
-    icon = (simple_icon(slug, pad_l, 10, 20) if slug else
-            f'<svg x="{pad_l}" y="10" width="20" height="20" viewBox="0 0 24 24">{DRAWN[fname]}</svg>')
+def connect_tile(i, fname, label, slug):
+    """A dark app-style tile: the brand's logo glowing in its own colour, its name inside, and a slow light sweep."""
+    S = 104
+    if slug:
+        icon = simple_icon(slug, 32, 18, 40)
+        brand = "#" + _SI.get(slug, "94a3b8")
+    else:
+        drawn, brand = DRAWN[fname]
+        icon = f'<svg x="32" y="18" width="40" height="40" viewBox="0 0 24 24">{drawn}</svg>'
     fonts = font_css([("Inter", 600, "inter/files/inter-latin-600-normal.woff2", label)])
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="{escape(label)}">'
-            f'<title>{escape(label)}</title><defs>{fonts}</defs>'
-            f'<rect x=".5" y=".5" width="{W - 1}" height="{H - 1}" rx="{(H - 1) / 2}" fill="#fff" stroke="#e5e7eb"/>'
-            f'{icon}<text x="{pad_l + 20 + gap}" y="25.2" font-family="{INTER}" font-weight="600" font-size="{size}" fill="{INK}">{escape(label)}</text></svg>')
+    begin = round(1.2 + i * .45, 2)
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{S}" height="{S}" viewBox="0 0 {S} {S}" role="img" aria-label="{escape(label)}">'
+            f'<title>{escape(label)}</title><defs>{fonts}'
+            f'<linearGradient id="bg-{fname}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1f2937"/><stop offset="1" stop-color="#0b1120"/></linearGradient>'
+            f'<radialGradient id="gl-{fname}" cx=".5" cy=".37" r=".46"><stop offset="0" stop-color="{brand}" stop-opacity=".38"/>'
+            f'<stop offset="1" stop-color="{brand}" stop-opacity="0"/></radialGradient>'
+            f'<linearGradient id="sh-{fname}" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/>'
+            f'<stop offset=".5" stop-color="#fff" stop-opacity=".16"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>'
+            f'<clipPath id="cl-{fname}"><rect width="{S}" height="{S}" rx="24"/></clipPath></defs>'
+            f'<g clip-path="url(#cl-{fname})">'
+            f'<rect width="{S}" height="{S}" fill="url(#bg-{fname})"/>'
+            f'<rect width="{S}" height="{S}" fill="url(#gl-{fname})"><animate attributeName="opacity" values=".75;1;.75" dur="5s" begin="{begin}s" repeatCount="indefinite"/></rect>'
+            f'<g transform="rotate(18 52 52)"><rect x="-140" y="-40" width="46" height="190" fill="url(#sh-{fname})">'
+            f'<animate attributeName="x" values="-140;200;200" keyTimes="0;.22;1" dur="7s" begin="{begin}s" repeatCount="indefinite"/></rect></g>'
+            f'<rect x=".5" y=".5" width="{S - 1}" height="{S - 1}" rx="23.5" fill="none" stroke="#fff" stroke-opacity=".09"/>'
+            f'</g>{icon}'
+            f'<text x="52" y="84" text-anchor="middle" font-family="{INTER}" font-weight="600" font-size="12.5" fill="#cbd5e1">{escape(label)}</text></svg>')
+
+
+def connect_heading():
+    """White ink card that matches the hero: the heading in the name's script, a self-drawing brush line, and a few leaves."""
+    W, H = 1024, 140
+    title = "Let's connect"
+    sub = "Open to internships, research collaborations and great conversations."
+    fonts = font_css([("Kaushan Script", 400, "kaushan-script/files/kaushan-script-latin-400-normal.woff2", title),
+                      ("JetBrains Mono", 400, "jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2", sub)])
+    leaves = []
+    for x, drift, dur, begin, s, col, op in [(70, 30, 9, -2, 1.2, "#1e3a8a", .35), (150, -25, 11, -6, 1.0, "#b45309", .30),
+                                              (880, 25, 10, -4, 1.1, "#334155", .32), (960, -30, 12, -8, 1.25, "#1e3a8a", .30),
+                                              (40, 20, 13, -10, .9, "#475569", .25), (1000, -20, 9.5, -1, .9, "#b45309", .25)]:
+        path = f"M{x},-20 C{x + drift:.0f},{H * .35:.0f} {x - drift * .6:.0f},{H * .7:.0f} {x + drift:.0f},{H + 20}"
+        spin = 180 if drift > 0 else -180
+        leaves.append(
+            f'<g opacity="0"><animate attributeName="opacity" values="0;{op};{op};0" keyTimes="0;.15;.8;1" dur="{dur}s" begin="{begin}s" repeatCount="indefinite"/>'
+            f'<animateMotion path="{path}" dur="{dur}s" begin="{begin}s" repeatCount="indefinite"/>'
+            f'<g transform="scale({s * 1.3:.2f})"><g><animateTransform attributeName="transform" type="rotate" values="0;{spin};{spin * 2}" dur="{dur * .9:.1f}s" begin="{begin}s" repeatCount="indefinite"/>'
+            f'<path d="{LEAF}" fill="{col}"/><path d="{VEIN}" stroke="#fff" stroke-width=".7" opacity=".55"/></g></g></g>')
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="Let's connect. {sub}">
+<title>Let's connect</title>
+<defs>{fonts}
+  {reveal("ttl", 330, 8, 364, 80, .2, 1.1)}
+  {reveal("sub", 180, 92, 664, 26, 1.2, 1.2)}
+  <clipPath id="frame"><rect width="{W}" height="{H}" rx="18"/></clipPath>
+</defs>
+<g clip-path="url(#frame)">
+<rect width="{W}" height="{H}" fill="#fff"/>
+{"".join(leaves)}
+<text x="{W // 2}" y="62" text-anchor="middle" font-family="{KAUSHAN}" font-size="44" fill="{INK}" clip-path="url(#ttl)">{escape(title)}</text>
+{brush(W // 2 - 58, 80, W // 2 + 62, 76, 1.0, 3.2)}
+<text x="{W // 2}" y="111" text-anchor="middle" font-family="{JB}" font-size="13" fill="#475569" clip-path="url(#sub)">{escape(sub)}</text>
+</g>
+</svg>
+'''
 
 
 def main():
@@ -384,8 +436,9 @@ def main():
         print(f"{name}: {len(svg)/1024:.0f} KB")
     if not a.only or "connect" in a.only:
         os.makedirs(os.path.join(a.out, "connect"), exist_ok=True)
-        for fname, label, slug in CONNECT:
-            svg = connect_badge(fname, label, slug)
+        simple_icon("github", 0, 0, 1)  # loads the brand-colour table used by the tiles
+        files = [("heading", connect_heading())] + [(f, connect_tile(i, f, l, s)) for i, (f, l, s) in enumerate(CONNECT)]
+        for fname, svg in files:
             ElementTree.fromstring(svg)
             with open(os.path.join(a.out, "connect", f"{fname}.svg"), "w", encoding="utf-8") as f:
                 f.write(svg)
