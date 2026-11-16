@@ -2,11 +2,12 @@
 
     pip install fonttools brotli pillow
     npm i @fontsource/kaushan-script @fontsource/caveat @fontsource/jetbrains-mono \
-          @fontsource/inter @fontsource/yuji-boku devicon simple-icons
-    python scripts/build_assets.py --node-modules path/to/node_modules --art art/ --out assets/
+          @fontsource/inter devicon simple-icons
+    python scripts/build_assets.py --node-modules path/to/node_modules --out assets/ [--only hero]
 
-Fonts are subset and embedded as base64 WOFF2 and the artwork is embedded as
-base64 JPEG, so every panel renders identically inside a GitHub README.
+Fonts are subset and embedded as base64 WOFF2, so every panel renders identically
+inside a GitHub README. The hero's ink landscape and falling leaves are drawn in SVG,
+with no embedded artwork.
 The activity panel is built separately by scripts/build_activity.py.
 """
 import argparse
@@ -55,7 +56,6 @@ INTER = "'Inter','Segoe UI',Helvetica,Arial,sans-serif"
 JB = "'JetBrains Mono',Consolas,'Liberation Mono',monospace"
 KAUSHAN = "'Kaushan Script',cursive"
 CAVEAT = "'Caveat',cursive"
-YUJI = "'Yuji Boku',serif"
 
 
 def std_fonts(extra=()):
@@ -130,10 +130,6 @@ def line_icon(kind, x, y, size=22, color=INK2, sw=1.8):
             f'stroke-width="{sw}" stroke-linecap="round" stroke-linejoin="round" color="{color}">{p}</svg>')
 
 
-def jpeg_b64(path):
-    return base64.b64encode(open(path, "rb").read()).decode()
-
-
 def brush(x1, y1, x2, y2, begin, width=4, color=INK, dur=.8):
     """A tapered brush stroke that draws itself in."""
     mx, my = (x1 + x2) / 2, min(y1, y2) - 4
@@ -155,56 +151,87 @@ def fade_in(begin, dur=.6, dy=8):
 
 
 # ───────────────────────────── hero ─────────────────────────────
-def hero(art):
+LEAF = "M0,-9 C5,-6 6,3 0,9 C-6,3 -5,-6 0,-9 Z"
+VEIN = "M0,-7.5 L0,7.5"
+
+
+def falling_leaves(H):
+    """Slow ink-wash leaves drifting down the banner, fainter over the text column."""
+    specs = [  # x start, sideways drift, seconds per fall, phase, scale, colour, peak opacity
+        (600, 60, 13, -2, 1.0, "#1e3a8a", .45), (680, -40, 16, -9, .8, "#334155", .40),
+        (760, 50, 12, -5, 1.15, "#b45309", .42), (840, -60, 15, -12, .9, "#1e3a8a", .38),
+        (900, 40, 14, -3.5, .75, "#475569", .42), (960, -50, 17, -7, 1.05, "#3b4a7a", .40),
+        (1000, -80, 13.5, -10.5, .85, "#b45309", .32), (560, 70, 18, -14, .7, "#475569", .30),
+        (120, 50, 19, -6, .7, "#64748b", .16), (300, -40, 21, -15, .6, "#64748b", .14),
+        (450, 60, 20, -1, .65, "#94a3b8", .18)]
+    out = []
+    for x, drift, dur, begin, s, col, op in specs:
+        path = f"M{x},-24 C{x + drift * .8:.0f},{H * .3:.0f} {x - drift * .5:.0f},{H * .65:.0f} {x + drift:.0f},{H + 24}"
+        spin = 200 if drift > 0 else -200
+        out.append(
+            f'<g opacity="0">'
+            f'<animate attributeName="opacity" values="0;{op};{op};0" keyTimes="0;.12;.85;1" dur="{dur}s" begin="{begin}s" repeatCount="indefinite"/>'
+            f'<animateMotion path="{path}" dur="{dur}s" begin="{begin}s" repeatCount="indefinite"/>'
+            f'<g transform="scale({s * 1.4:.2f})"><g>'
+            f'<animateTransform attributeName="transform" type="rotate" values="0;{spin};{spin * 2}" dur="{dur * .9:.1f}s" begin="{begin}s" repeatCount="indefinite"/>'
+            f'<path d="{LEAF}" fill="{col}"/><path d="{VEIN}" stroke="#fff" stroke-width=".7" opacity=".55"/>'
+            f'</g></g></g>')
+    return "".join(out)
+
+
+def ink_landscape(W, H):
+    """Layered sumi-e ridges with drifting mist and a soft sun, fading into the white text column."""
+    ridges = [
+        ("M540,300 C600,240 640,252 690,206 C730,172 762,192 802,150 C842,114 880,150 922,120 C962,94 992,120 1024,104 L1024,372 L540,372 Z", "ra", .20),
+        ("M560,332 C622,282 662,300 722,250 C772,210 812,240 862,200 C912,166 952,210 1024,180 L1024,372 L560,372 Z", "rb", .32),
+        ("M610,372 C660,332 706,346 764,302 C822,260 872,300 932,270 C972,250 1000,262 1024,256 L1024,372 Z", "rc", .55)]
+    grads, paths = [], []
+    for d, gid, op in ridges:
+        grads.append(f'<linearGradient id="{gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e293b" stop-opacity="{op}"/>'
+                     f'<stop offset="1" stop-color="#1e293b" stop-opacity="0"/></linearGradient>')
+        paths.append(f'<path d="{d}" fill="url(#{gid})"/>')
+    mist = []
+    for i, (y, w, dur) in enumerate([(250, 280, 26), (300, 360, 32), (215, 220, 22)]):
+        mist.append(f'<ellipse cx="0" cy="{y}" rx="{w / 2:.0f}" ry="{12 + i * 4}" fill="#fff" opacity=".6" filter="url(#mistblur)">'
+                    f'<animate attributeName="cx" values="{520 - w / 2:.0f};{W + w / 2:.0f}" dur="{dur}s" begin="-{i * 8}s" repeatCount="indefinite"/></ellipse>')
+    sun = ('<circle cx="900" cy="86" r="34" fill="#e0e7ff"><animate attributeName="opacity" values=".55;.9;.55" dur="8s" repeatCount="indefinite"/></circle>'
+           '<circle cx="900" cy="86" r="46" fill="none" stroke="#c7d2fe" stroke-width="1.2" opacity=".6"/>')
+    defs = ("".join(grads) + '<filter id="mistblur" x="-50%" y="-200%" width="200%" height="500%"><feGaussianBlur stdDeviation="9"/></filter>'
+            '<linearGradient id="fadeL" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>')
+    # back ridge, mist, mid ridge, mist, front ridge, mist; then fade the left edge into the text column
+    body = sun + paths[0] + mist[2] + paths[1] + mist[0] + paths[2] + mist[1] + f'<rect x="500" y="0" width="160" height="{H}" fill="url(#fadeL)"/>'
+    return defs, body
+
+
+def hero():
     W, H = 1024, 372
     name = "Munal Singh"
     fonts = std_fonts([("Kaushan Script", 400, "kaushan-script/files/kaushan-script-latin-400-normal.woff2", name),
-                       ("Caveat", 500, "caveat/files/caveat-latin-500-normal.woff2", ASCII),
-                       ("Yuji Boku", 400, "yuji-boku/files/yuji-boku-japanese-400-normal.woff2", "孫悟空")])
+                       ("Caveat", 500, "caveat/files/caveat-latin-500-normal.woff2", ASCII)])
     tagline = ["Building intelligent systems, one line of code at a time.",
                "Passionate about AI/ML, data science, maths, physics and",
                "creating real-world impact through technology."]
     tag_svg = []
     t0 = 1.6
     for i, line in enumerate(tagline):
-        y = 252 + i * 21
+        y = 226 + i * 21
         w = len(line) * 7.9 + 6
         d = len(line) * .018
         tag_svg.append(reveal(f"tl{i}", 36, y - 15, w, 22, round(t0, 2), round(d, 2)) +
                        f'<text x="36" y="{y}" font-family="{JB}" font-size="13" fill="{INK2}" clip-path="url(#tl{i})">{escape(line)}</text>')
         t0 += d + .05
-    wisps = []
-    for i, (d, op) in enumerate([("M600,300 C640,250 610,190 660,150 C700,120 690,80 740,60", .16),
-                                 ("M930,320 C900,270 940,220 905,170 C880,135 915,100 890,60", .14),
-                                 ("M560,180 C600,160 590,120 630,95", .12)]):
-        wisps.append(f'<path d="{d}" fill="none" stroke="#3b4a7a" stroke-width="{10 - i*2}" stroke-linecap="round" opacity="{op}" stroke-dasharray="420" stroke-dashoffset="420">'
-                     f'<animate attributeName="stroke-dashoffset" values="420;0;0;-420" keyTimes="0;.4;.6;1" dur="{9 + i*2}s" begin="{i*1.3}s" repeatCount="indefinite"/></path>')
-    dots = []
-    for i, (x, y) in enumerate([(612, 260), (640, 310), (905, 250), (940, 300), (585, 120), (880, 40), (700, 320)]):
-        dots.append(f'<circle cx="{x}" cy="{y}" r="{1.6 + (i % 3)}" fill="#1e3a8a" opacity="0">'
-                    f'<animate attributeName="cy" values="{y};{y-60}" dur="{5 + i % 3}s" begin="{i*.7}s" repeatCount="indefinite"/>'
-                    f'<animate attributeName="opacity" values="0;.45;0" dur="{5 + i % 3}s" begin="{i*.7}s" repeatCount="indefinite"/></circle>')
-    kanji = "".join(f'<g opacity="0">{fade_in(1.0 + i * .35, .9, -10)}<text x="980" y="{98 + i*50}" text-anchor="middle" font-family="{YUJI}" font-size="40" fill="{NAVY}">{c}</text></g>'
-                    for i, c in enumerate("孫悟空"))
-    motto = "".join(f'<g opacity="0">{fade_in(2.2 + i * .2, .6)}<text x="980" y="{236 + i*20}" text-anchor="middle" font-family="{JB}" font-size="10" letter-spacing="3" fill="#475569">{w}</text></g>'
-                    for i, w in enumerate(["HIGHER", "FURTHER", "STRONGER"]))
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="Munal Singh: AI/ML Engineer, Data Science Enthusiast, Problem Solver. Himachal Pradesh, India. VIT Vellore, CSE (Data Science).">
+    land_defs, land = ink_landscape(W, H)
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="Munal Singh: AI/ML Engineer, Data Science Enthusiast, Problem Solver.">
 <title>Munal Singh: AI/ML Engineer · Data Science Enthusiast · Problem Solver</title>
 <defs>{fonts}
+  {land_defs}
   {reveal("nm", 30, 60, 480, 100, .3, 1.6)}
   <clipPath id="frame"><rect width="{W}" height="{H}" rx="18"/></clipPath>
 </defs>
 <g clip-path="url(#frame)">
 <rect width="{W}" height="{H}" fill="#fff"/>
-<rect x="0" y="0" width="{W}" height="{H}" fill="#f3f4fb" opacity=".0"/>
-{"".join(wisps)}
-<g opacity="0"><animate attributeName="opacity" from="0" to="1" dur="1.4s" fill="freeze"/>
-  <image x="512" y="0" width="430" height="335" preserveAspectRatio="xMidYMid slice" xlink:href="data:image/jpeg;base64,{art}" href="data:image/jpeg;base64,{art}"/>
-</g>
-{"".join(dots)}
-{kanji}
-{motto}
-{brush(944, 296, 1012, 290, 2.9, 3.2)}
+<g opacity="0"><animate attributeName="opacity" from="0" to="1" dur="1.6s" fill="freeze"/>{land}</g>
+{falling_leaves(H)}
 {simple_icon("github", 36, 26, 38, INK)}
 <text x="96" y="50" font-family="{JB}" font-size="12" letter-spacing="3" fill="{MUTED}">CODE  /  BUILD  /  LEARN  /  GROW</text>
 <g clip-path="url(#nm)">
@@ -215,20 +242,11 @@ def hero(art):
 <g opacity="0">{fade_in(1.2)}
   <text x="36" y="178" font-family="{JB}" font-weight="500" font-size="13.5" fill="{INK}" xml:space="preserve">AI/ML Engineer  |  Data Science Enthusiast  |  Problem Solver</text>
 </g>
-<g opacity="0">{fade_in(1.4)}
-  {line_icon("pin", 34, 199, 18, INK)}
-  <text x="58" y="213" font-family="{INTER}" font-size="13.5" fill="{INK2}">Himachal Pradesh, India</text>
-  <text x="222" y="213" font-family="{INTER}" font-size="13.5" fill="#d1d5db">|</text>
-  {line_icon("cap", 238, 198, 19, INK)}
-  <text x="264" y="213" font-family="{INTER}" font-size="13.5" fill="{INK2}">VIT Vellore</text>
-  <text x="345" y="213" font-family="{INTER}" font-size="13.5" fill="#d1d5db">|</text>
-  <text x="358" y="213" font-family="{INTER}" font-size="13.5" fill="{INK2}">CSE (Data Science)</text>
-</g>
 {"".join(tag_svg)}
 <g opacity="0">{fade_in(2.7)}
-  <text x="36" y="330" font-family="{CAVEAT}" font-weight="500" font-size="22" fill="{INK2}">“Better than yesterday.”</text>
+  <text x="36" y="318" font-family="{CAVEAT}" font-weight="500" font-size="22" fill="{INK2}">“Better than yesterday.”</text>
 </g>
-{brush(40, 349, 118, 344, 2.9, 3)}
+{brush(40, 337, 118, 332, 2.9, 3)}
 </g>
 </svg>
 '''
@@ -309,66 +327,23 @@ def skills():
 '''
 
 
-# ───────────────────────────── footer ─────────────────────────────
-def footer(art):
-    W, H = 1024, 236
-    BG = "#f6f7fb"
-    quote = ["The strongest people", "are not those who never fall,", "but those who rise every time they do. ”"]
-    fonts = std_fonts([("Caveat", 500, "caveat/files/caveat-latin-500-normal.woff2", ASCII)])
-    lines = []
-    for i, q in enumerate(quote):
-        y = 76 + i * 38
-        w = len(q) * 11.2 + 10
-        lines.append(reveal(f"q{i}", 60, y - 30, w, 42, .5 + i * .9, .9) +
-                     f'<text x="64" y="{y}" font-family="{CAVEAT}" font-weight="500" font-size="27" fill="{NAVY}" clip-path="url(#q{i})">{escape(q)}</text>')
-    mist = []
-    for i, (y, w, dur) in enumerate([(150, 260, 22), (185, 340, 28), (120, 200, 18)]):
-        mist.append(f'<ellipse cx="0" cy="{y}" rx="{w/2:.0f}" ry="{14 + i*4}" fill="#fff" opacity=".55" filter="url(#blur)">'
-                    f'<animate attributeName="cx" values="{300 - w/2:.0f};{780 + w/2:.0f}" dur="{dur}s" begin="-{i*7}s" repeatCount="indefinite"/></ellipse>')
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="“The strongest people are not those who never fall, but those who rise every time they do.” Goku. Let's connect: open to internships, collaborations and great conversations.">
-<title>The strongest people are not those who never fall, but those who rise every time they do. — Goku</title>
-<defs>{fonts}
-  <filter id="blur" x="-50%" y="-200%" width="200%" height="500%"><feGaussianBlur stdDeviation="9"/></filter>
-  <clipPath id="frame"><rect width="{W}" height="{H}" rx="18"/></clipPath>
-  <clipPath id="artclip"><rect x="330" y="26" width="412" height="{H-26}"/></clipPath>
-</defs>
-<g clip-path="url(#frame)">
-<rect width="{W}" height="{H}" fill="{BG}"/>
-<image x="330" y="44" width="412" height="184" xlink:href="data:image/jpeg;base64,{art}" href="data:image/jpeg;base64,{art}"/>
-<circle cx="640" cy="78" r="22" fill="#fff" opacity=".7"><animate attributeName="opacity" values=".45;.85;.45" dur="6s" repeatCount="indefinite"/></circle>
-<g clip-path="url(#artclip)">{"".join(mist)}</g>
-<text x="38" y="70" font-family="{CAVEAT}" font-weight="500" font-size="30" fill="{NAVY}" opacity="0">“<animate attributeName="opacity" from="0" to="1" begin=".3s" dur=".4s" fill="freeze"/></text>
-{"".join(lines)}
-<g opacity="0">{fade_in(3.3)}<text x="64" y="196" font-family="{INTER}" font-size="15" fill="{NAVY}">— Goku</text></g>
-<rect x="752" y="42" width="1.2" height="150" fill="#c7cde0"/>
-<g opacity="0">{fade_in(.6)}
-  <text x="778" y="66" font-family="{INTER}" font-weight="600" font-size="15" letter-spacing=".8" fill="{NAVY}">Let's Connect</text>
-  {simple_icon("github", 778, 84, 32, INK)}
-  {line_icon("mail", 830, 84, 34, "#1e3a8a", 2)}
-  <text x="778" y="150" font-family="{INTER}" font-size="13.5" fill="#334155">Open to internships, collaborations</text>
-  <text x="778" y="170" font-family="{INTER}" font-size="13.5" fill="#334155">and great conversations!</text>
-</g>
-{brush(790, 196, 905, 190, 1.4, 3.4, "#1e3a8a")}
-</g>
-</svg>
-'''
-
-
 def main():
     global NM
     ap = argparse.ArgumentParser()
     ap.add_argument("--node-modules", required=True)
-    ap.add_argument("--art", required=True, help="folder with goku_top.jpg and goku_foot.jpg")
     ap.add_argument("--out", default="assets")
+    ap.add_argument("--only", nargs="*", help="build just these panels, e.g. --only hero")
     a = ap.parse_args()
     NM = a.node_modules
     os.makedirs(a.out, exist_ok=True)
-    top, foot = jpeg_b64(os.path.join(a.art, "goku_top.jpg")), jpeg_b64(os.path.join(a.art, "goku_foot.jpg"))
-    for name, svg in (("hero.svg", hero(top)), ("skills.svg", skills()), ("footer.svg", footer(foot))):
+    for name, build in (("hero.svg", hero), ("skills.svg", skills)):
+        if a.only and name[:-4] not in a.only:
+            continue
+        svg = build()
         # GitHub serves these as standalone images, so they must be well-formed XML
         # (an undeclared xlink: prefix renders as a broken image there, though HTML embeds forgive it).
         ElementTree.fromstring(svg)
-        with open(os.path.join(a.out, name), "w") as f:
+        with open(os.path.join(a.out, name), "w", encoding="utf-8") as f:
             f.write(svg)
         print(f"{name}: {len(svg)/1024:.0f} KB")
 
