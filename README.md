@@ -1,17 +1,33 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/hero.svg" width="100%" alt="Munal Singh: AI/ML Engineer, Data Science Enthusiast, Problem Solver. Building intelligent systems, one line of code at a time. Better than yesterday."/>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/hero-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/hero.svg">
+    <img src="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/hero.svg" width="100%" alt="Munal Singh: AI/ML Engineer, Data Science Enthusiast, Problem Solver. Building intelligent systems, one line of code at a time. Better than yesterday."/>
+  </picture>
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/skills.svg" width="100%" alt="Skills: Python, PyTorch, Hugging Face, Diffusion Models, Quantization, Computer Vision, vLLM, LoRA Fine-Tuning, Google ADK, MCP, RAG, MLflow, Go, FastAPI, Kafka, Redis, PostgreSQL, Docker, Kubernetes, Helm, KEDA, Prometheus, Grafana, AWS"/>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/skills-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/skills.svg">
+    <img src="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/skills.svg" width="100%" alt="Skills: Python, PyTorch, Hugging Face, Diffusion Models, Quantization, Computer Vision, vLLM, LoRA Fine-Tuning, Google ADK, MCP, RAG, MLflow, Go, FastAPI, Kafka, Redis, PostgreSQL, Docker, Kubernetes, Helm, KEDA, Prometheus, Grafana, AWS"/>
+  </picture>
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/krizz711/krizz711/output/activity.svg" width="100%" alt="Training Ground: a pixel-art Goku charges up in a cyan aura and fires Kamehameha blasts across a decorative grid"/>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/krizz711/krizz711/output/activity-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/krizz711/krizz711/output/activity.svg">
+    <img src="https://raw.githubusercontent.com/krizz711/krizz711/output/activity.svg" width="100%" alt="Training Ground: a pixel-art Goku charges up in a cyan aura and fires Kamehameha blasts across a decorative grid"/>
+  </picture>
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/connect/heading.svg" width="100%" alt="Let's connect. Open to internships, research collaborations and great conversations."/>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/connect/heading-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/connect/heading.svg">
+    <img src="https://raw.githubusercontent.com/krizz711/krizz711/main/assets/connect/heading.svg" width="100%" alt="Let's connect. Open to internships, research collaborations and great conversations."/>
+  </picture>
 </p>
 
 <p align="center">
