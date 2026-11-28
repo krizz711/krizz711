@@ -8,13 +8,20 @@
 Fonts are subset and embedded as base64 WOFF2, so every panel renders identically
 inside a GitHub README. The hero's ink landscape and falling leaves are drawn in SVG,
 with no embedded artwork.
+
+Every card is built twice: name.svg (white card, for GitHub's light themes) and
+name-dark.svg (the same art in light ink on a dark card, with a moon and stars in the
+hero). The README pairs them in a <picture>, and GitHub shows each viewer the one that
+matches their GitHub theme. The connect tiles are dark already and work on both.
 The activity panel is built separately by scripts/build_activity.py.
 """
 import argparse
 import base64
 import io
 import json
+import math
 import os
+import random
 import re
 from xml.etree import ElementTree
 from xml.sax.saxutils import escape
@@ -26,6 +33,36 @@ INK, INK2, MUTED, LINE, NAVY = "#0f172a", "#1f2937", "#6b7280", "#e5e7eb", "#1e2
 ASCII = "".join(chr(c) for c in range(32, 127)) + "“”‘’—–|·→↑↓…"
 
 NM = None  # node_modules path, set in main()
+
+# ───────────────────────────── themes ─────────────────────────────
+LIGHT = {
+    "card": "#fff", "edge": None, "ink": INK, "ink2": INK2, "muted": MUTED, "line": LINE, "sub": "#475569",
+    "ridge": "#1e293b", "ridge_ops": (.20, .32, .55), "mist": "#fff", "sun_ring_op": ".6", "night": False,
+    "leaves": {}, "vein": "#fff", "shine": ("#eef2ff", "#e0e7ff", ".9"),
+    "dev_fix": {}, "col_fix": {},
+}
+DARK = {  # GitHub's dark palette: card #151b23, border #3d444d, text #f0f6fc
+    "card": "#151b23", "edge": "#3d444d", "ink": "#f0f6fc", "ink2": "#d1d9e0", "muted": "#9198a1", "line": "#3d444d",
+    "sub": "#9198a1", "ridge": "#8ea0bf", "ridge_ops": (.16, .24, .36), "mist": "#151b23", "sun_ring_op": ".35",
+    "night": True,
+    "leaves": {"#1e3a8a": "#7aa2f7", "#334155": "#94a3b8", "#b45309": "#e3a15a", "#475569": "#a8b3c4",
+               "#3b4a7a": "#8b9cf0", "#64748b": "#94a3b8", "#94a3b8": "#c3ccd9"},
+    "vein": "#151b23", "shine": ("#a5b4fc", "#a5b4fc", ".16"),
+    # black or navy marks would vanish on the dark card, so they turn white,
+    # as these brands' own dark-background logos do
+    "dev_fix": {"apachekafka": {"#231f20": "#f0f6fc"}, "helm": {"#0f1689": "#f0f6fc"},
+                "amazonwebservices": {"#252f3e": "#f0f6fc"}},
+    # the line icons and forced icon colours step up to their brighter shades
+    "col_fix": {"#111827": "#f0f6fc", "#db2777": "#f472b6", "#0891b2": "#22d3ee", "#4f46e5": "#818cf8",
+                "#ea580c": "#fb923c", "#16a34a": "#4ade80", "#2563eb": "#60a5fa"},
+}
+
+
+def edge(W, H, t):
+    """Dark cards get a hairline border, so they read as cards on every dark GitHub theme."""
+    if not t["edge"]:
+        return ""
+    return f'\n<rect x=".5" y=".5" width="{W - 1}" height="{H - 1}" rx="17.5" fill="none" stroke="{t["edge"]}"/>'
 
 
 # ───────────────────────────── fonts ─────────────────────────────
@@ -86,9 +123,11 @@ def simple_icon(slug, x, y, size, color=None):
     return f'<svg x="{x}" y="{y}" width="{size}" height="{size}" viewBox="0 0 24 24"><path d="{d}" fill="{col}"/></svg>'
 
 
-def devicon(name, x, y, size, variant="original"):
+def devicon(name, x, y, size, variant="original", recolor=None):
     svg = open(os.path.join(NM, f"devicon/icons/{name}/{name}-{variant}.svg")).read()
     inner = re.sub(r"^.*?<svg[^>]*>|</svg>\s*$", "", svg, flags=re.S)
+    for old, new in (recolor or {}).items():
+        inner = re.sub(re.escape(old), new, inner, flags=re.I)
     pre = re.sub(r"[^a-z]", "", name)
     inner = re.sub(r'id="([^"]+)"', lambda m: f'id="{pre}-{m.group(1)}"', inner)
     inner = re.sub(r'url\(#([^)]+)\)', lambda m: f'url(#{pre}-{m.group(1)})', inner)
@@ -155,7 +194,7 @@ LEAF = "M0,-9 C5,-6 6,3 0,9 C-6,3 -5,-6 0,-9 Z"
 VEIN = "M0,-7.5 L0,7.5"
 
 
-def falling_leaves(H):
+def falling_leaves(H, t):
     """Slow ink-wash leaves drifting down the banner, fainter over the text column."""
     specs = [  # x start, sideways drift, seconds per fall, phase, scale, colour, peak opacity
         (600, 60, 13, -2, 1.0, "#1e3a8a", .45), (680, -40, 16, -9, .8, "#334155", .40),
@@ -174,36 +213,67 @@ def falling_leaves(H):
             f'<animateMotion path="{path}" dur="{dur}s" begin="{begin}s" repeatCount="indefinite"/>'
             f'<g transform="scale({s * 1.4:.2f})"><g>'
             f'<animateTransform attributeName="transform" type="rotate" values="0;{spin};{spin * 2}" dur="{dur * .9:.1f}s" begin="{begin}s" repeatCount="indefinite"/>'
-            f'<path d="{LEAF}" fill="{col}"/><path d="{VEIN}" stroke="#fff" stroke-width=".7" opacity=".55"/>'
+            f'<path d="{LEAF}" fill="{t["leaves"].get(col, col)}"/><path d="{VEIN}" stroke="{t["vein"]}" stroke-width=".7" opacity=".55"/>'
             f'</g></g></g>')
     return "".join(out)
 
 
-def ink_landscape(W, H):
-    """Layered sumi-e ridges with drifting mist and a soft sun, fading into the white text column."""
+RIDGE_TOP = [(540, 300), (690, 206), (802, 150), (922, 120), (1024, 104)]  # roughly the back ridge's crest
+
+
+def night_sky():
+    """Dark theme only: a soft halo round the moon and a few slow-twinkling stars above the ridges."""
+    def crest(x):
+        for (x0, y0), (x1, y1) in zip(RIDGE_TOP, RIDGE_TOP[1:]):
+            if x <= x1:
+                return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+        return RIDGE_TOP[-1][1]
+    rng = random.Random(7)
+    stars = []
+    while len(stars) < 18:
+        x, y = rng.uniform(600, 1010), rng.uniform(16, 172)
+        if y > crest(x) - 18 or math.dist((x, y), (900, 86)) < 64 or any(math.dist((x, y), (a, b)) < 34 for a, b, *_ in stars):
+            continue
+        stars.append((x, y, rng.choice((.7, .9, 1.1, 1.4)), rng.uniform(2.5, 6), rng.uniform(0, 6)))
+    out = ['<circle cx="900" cy="86" r="104" fill="url(#halo)"/>']
+    for x, y, r, dur, ph in stars:
+        out.append(f'<circle cx="{x:.0f}" cy="{y:.0f}" r="{r}" fill="#e6edf3" opacity=".3">'
+                   f'<animate attributeName="opacity" values=".15;.85;.15" dur="{dur:.1f}s" begin="-{ph:.1f}s" repeatCount="indefinite"/></circle>')
+    return "".join(out)
+
+
+def ink_landscape(W, H, t):
+    """Layered sumi-e ridges with drifting mist and a soft sun, fading into the text column.
+
+    The dark card prints the same ridges in light ink, the sun becomes a haloed moon and stars come out."""
     ridges = [
-        ("M540,300 C600,240 640,252 690,206 C730,172 762,192 802,150 C842,114 880,150 922,120 C962,94 992,120 1024,104 L1024,372 L540,372 Z", "ra", .20),
-        ("M560,332 C622,282 662,300 722,250 C772,210 812,240 862,200 C912,166 952,210 1024,180 L1024,372 L560,372 Z", "rb", .32),
-        ("M610,372 C660,332 706,346 764,302 C822,260 872,300 932,270 C972,250 1000,262 1024,256 L1024,372 Z", "rc", .55)]
+        ("M540,300 C600,240 640,252 690,206 C730,172 762,192 802,150 C842,114 880,150 922,120 C962,94 992,120 1024,104 L1024,372 L540,372 Z", "ra"),
+        ("M560,332 C622,282 662,300 722,250 C772,210 812,240 862,200 C912,166 952,210 1024,180 L1024,372 L560,372 Z", "rb"),
+        ("M610,372 C660,332 706,346 764,302 C822,260 872,300 932,270 C972,250 1000,262 1024,256 L1024,372 Z", "rc")]
     grads, paths = [], []
-    for d, gid, op in ridges:
-        grads.append(f'<linearGradient id="{gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e293b" stop-opacity="{op}"/>'
-                     f'<stop offset="1" stop-color="#1e293b" stop-opacity="0"/></linearGradient>')
+    for (d, gid), op in zip(ridges, t["ridge_ops"]):
+        grads.append(f'<linearGradient id="{gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{t["ridge"]}" stop-opacity="{op}"/>'
+                     f'<stop offset="1" stop-color="{t["ridge"]}" stop-opacity="0"/></linearGradient>')
         paths.append(f'<path d="{d}" fill="url(#{gid})"/>')
     mist = []
     for i, (y, w, dur) in enumerate([(250, 280, 26), (300, 360, 32), (215, 220, 22)]):
-        mist.append(f'<ellipse cx="0" cy="{y}" rx="{w / 2:.0f}" ry="{12 + i * 4}" fill="#fff" opacity=".6" filter="url(#mistblur)">'
+        mist.append(f'<ellipse cx="0" cy="{y}" rx="{w / 2:.0f}" ry="{12 + i * 4}" fill="{t["mist"]}" opacity=".6" filter="url(#mistblur)">'
                     f'<animate attributeName="cx" values="{520 - w / 2:.0f};{W + w / 2:.0f}" dur="{dur}s" begin="-{i * 8}s" repeatCount="indefinite"/></ellipse>')
     sun = ('<circle cx="900" cy="86" r="34" fill="#e0e7ff"><animate attributeName="opacity" values=".55;.9;.55" dur="8s" repeatCount="indefinite"/></circle>'
-           '<circle cx="900" cy="86" r="46" fill="none" stroke="#c7d2fe" stroke-width="1.2" opacity=".6"/>')
+           f'<circle cx="900" cy="86" r="46" fill="none" stroke="#c7d2fe" stroke-width="1.2" opacity="{t["sun_ring_op"]}"/>')
     defs = ("".join(grads) + '<filter id="mistblur" x="-50%" y="-200%" width="200%" height="500%"><feGaussianBlur stdDeviation="9"/></filter>'
-            '<linearGradient id="fadeL" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>')
+            f'<linearGradient id="fadeL" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="{t["card"]}"/><stop offset="1" stop-color="{t["card"]}" stop-opacity="0"/></linearGradient>')
+    sky = ""
+    if t["night"]:
+        defs += ('<radialGradient id="halo"><stop offset=".3" stop-color="#c7d2fe" stop-opacity=".2"/>'
+                 '<stop offset=".6" stop-color="#a5b4fc" stop-opacity=".07"/><stop offset="1" stop-color="#a5b4fc" stop-opacity="0"/></radialGradient>')
+        sky = night_sky()
     # back ridge, mist, mid ridge, mist, front ridge, mist; then fade the left edge into the text column
-    body = sun + paths[0] + mist[2] + paths[1] + mist[0] + paths[2] + mist[1] + f'<rect x="500" y="0" width="160" height="{H}" fill="url(#fadeL)"/>'
+    body = sky + sun + paths[0] + mist[2] + paths[1] + mist[0] + paths[2] + mist[1] + f'<rect x="500" y="0" width="160" height="{H}" fill="url(#fadeL)"/>'
     return defs, body
 
 
-def hero():
+def hero(t):
     W, H = 1024, 372
     name = "Munal Singh"
     fonts = std_fonts([("Kaushan Script", 400, "kaushan-script/files/kaushan-script-latin-400-normal.woff2", name),
@@ -218,9 +288,9 @@ def hero():
         w = len(line) * 7.9 + 6
         d = len(line) * .018
         tag_svg.append(reveal(f"tl{i}", 36, y - 15, w, 22, round(t0, 2), round(d, 2)) +
-                       f'<text x="36" y="{y}" font-family="{JB}" font-size="13" fill="{INK2}" clip-path="url(#tl{i})">{escape(line)}</text>')
+                       f'<text x="36" y="{y}" font-family="{JB}" font-size="13" fill="{t["ink2"]}" clip-path="url(#tl{i})">{escape(line)}</text>')
         t0 += d + .05
-    land_defs, land = ink_landscape(W, H)
+    land_defs, land = ink_landscape(W, H, t)
     return f'''<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="Munal Singh: AI/ML Engineer, Data Science Enthusiast, Problem Solver.">
 <title>Munal Singh: AI/ML Engineer · Data Science Enthusiast · Problem Solver</title>
 <defs>{fonts}
@@ -229,25 +299,25 @@ def hero():
   <clipPath id="frame"><rect width="{W}" height="{H}" rx="18"/></clipPath>
 </defs>
 <g clip-path="url(#frame)">
-<rect width="{W}" height="{H}" fill="#fff"/>
+<rect width="{W}" height="{H}" fill="{t["card"]}"/>
 <g opacity="0"><animate attributeName="opacity" from="0" to="1" dur="1.6s" fill="freeze"/>{land}</g>
-{falling_leaves(H)}
-{simple_icon("github", 36, 26, 38, INK)}
-<text x="96" y="50" font-family="{JB}" font-size="12" letter-spacing="3" fill="{MUTED}">CODE  /  BUILD  /  LEARN  /  GROW</text>
+{falling_leaves(H, t)}
+{simple_icon("github", 36, 26, 38, t["ink"])}
+<text x="96" y="50" font-family="{JB}" font-size="12" letter-spacing="3" fill="{t["muted"]}">CODE  /  BUILD  /  LEARN  /  GROW</text>
 <g clip-path="url(#nm)">
-  <text x="36" y="136" font-family="{KAUSHAN}" font-size="64" fill="{INK}">{name}</text>
-  <path d="M404,120 l14,-22 l9,12 l7,-9 l15,19" fill="none" stroke="{INK}" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
-  <path d="M414,106 l4,-4 l4,5" fill="none" stroke="{INK}" stroke-width="2" stroke-linecap="round"/>
+  <text x="36" y="136" font-family="{KAUSHAN}" font-size="64" fill="{t["ink"]}">{name}</text>
+  <path d="M404,120 l14,-22 l9,12 l7,-9 l15,19" fill="none" stroke="{t["ink"]}" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M414,106 l4,-4 l4,5" fill="none" stroke="{t["ink"]}" stroke-width="2" stroke-linecap="round"/>
 </g>
 <g opacity="0">{fade_in(1.2)}
-  <text x="36" y="178" font-family="{JB}" font-weight="500" font-size="13.5" fill="{INK}" xml:space="preserve">AI/ML Engineer  |  Data Science Enthusiast  |  Problem Solver</text>
+  <text x="36" y="178" font-family="{JB}" font-weight="500" font-size="13.5" fill="{t["ink"]}" xml:space="preserve">AI/ML Engineer  |  Data Science Enthusiast  |  Problem Solver</text>
 </g>
 {"".join(tag_svg)}
 <g opacity="0">{fade_in(2.7)}
-  <text x="36" y="318" font-family="{CAVEAT}" font-weight="500" font-size="22" fill="{INK2}">“Better than yesterday.”</text>
+  <text x="36" y="318" font-family="{CAVEAT}" font-weight="500" font-size="22" fill="{t["ink2"]}">“Better than yesterday.”</text>
 </g>
-{brush(40, 337, 118, 332, 2.9, 3)}
-</g>
+{brush(40, 337, 118, 332, 2.9, 3, t["ink"])}
+</g>{edge(W, H, t)}
 </svg>
 '''
 
@@ -280,16 +350,17 @@ def text_width(s, size):
     return sum(hmtx[cmap[ord(c)]][0] for c in s) * size / upm
 
 
-def icon_from(spec, x, y, size):
+def icon_from(spec, x, y, size, t):
     kind, *rest = spec.split(":")
     if kind == "dev":
-        return devicon(rest[0], x, y, size, rest[1] if len(rest) > 1 else "original")
+        return devicon(rest[0], x, y, size, rest[1] if len(rest) > 1 else "original", t["dev_fix"].get(rest[0]))
     if kind == "si":
-        return simple_icon(rest[0], x, y, size, rest[1] if len(rest) > 1 else None)
-    return line_icon(rest[0], x, y, size, rest[1], 2)
+        col = rest[1] if len(rest) > 1 else None
+        return simple_icon(rest[0], x, y, size, t["col_fix"].get(col, col))
+    return line_icon(rest[0], x, y, size, t["col_fix"].get(rest[1], rest[1]), 2)
 
 
-def skills():
+def skills(t):
     W, H = 1024, 88 + 60 * len(SKILLS)
     rows = []
     k = 0
@@ -303,26 +374,27 @@ def skills():
             w = nw + extra
             beg = .2 + k * .06
             rows.append(f'<g opacity="0">{fade_in(beg, .5, 10)}'
-                        f'<rect x="{x:.1f}" y="{y}" width="{w:.1f}" height="46" rx="10" fill="#fff" stroke="{LINE}"/>'
-                        + icon_from(spec, round(x + 18), y + 11, 24) +
-                        f'<text x="{x + 54:.1f}" y="{y + 28}" font-family="{INTER}" font-size="13.5" fill="{INK2}">{escape(lab)}</text>'
+                        f'<rect x="{x:.1f}" y="{y}" width="{w:.1f}" height="46" rx="10" fill="{t["card"]}" stroke="{t["line"]}"/>'
+                        + icon_from(spec, round(x + 18), y + 11, 24, t) +
+                        f'<text x="{x + 54:.1f}" y="{y + 28}" font-family="{INTER}" font-size="13.5" fill="{t["ink2"]}">{escape(lab)}</text>'
                         f'<rect x="{x:.1f}" y="{y}" width="{w:.1f}" height="46" rx="10" fill="url(#shine)" opacity="0">'
                         f'<animate attributeName="opacity" values="0;1;0" dur="1.2s" begin="{3 + k * .25:.2f}s;{3 + k*.25 + 8:.2f}s" /></rect></g>')
             x += w + gap
             k += 1
+    s0, s1, peak = t["shine"]
+    hairline = "" if t["edge"] else f'<rect x="36" y="0" width="{W-72}" height="1" fill="{t["line"]}"/>\n'
     return f'''<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="Skills and technologies: {escape(", ".join(l for row in SKILLS for l, _ in row))}">
 <title>Skills &amp; Technologies</title>
 <defs>{std_fonts()}
-  <linearGradient id="shine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#eef2ff" stop-opacity="0"/><stop offset=".5" stop-color="#e0e7ff" stop-opacity=".9"/><stop offset="1" stop-color="#eef2ff" stop-opacity="0"/></linearGradient>
+  <linearGradient id="shine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="{s0}" stop-opacity="0"/><stop offset=".5" stop-color="{s1}" stop-opacity="{peak}"/><stop offset="1" stop-color="{s0}" stop-opacity="0"/></linearGradient>
   <clipPath id="frame"><rect width="{W}" height="{H}" rx="18"/></clipPath>
 </defs>
 <g clip-path="url(#frame)">
-<rect width="{W}" height="{H}" fill="#fff"/>
-<rect x="36" y="0" width="{W-72}" height="1" fill="{LINE}"/>
-{line_icon("skills", 36, 24, 28, INK, 2)}
-<text x="78" y="47" font-family="{INTER}" font-weight="700" font-size="22" fill="{INK}">Skills &amp; Technologies</text>
+<rect width="{W}" height="{H}" fill="{t["card"]}"/>
+{hairline}{line_icon("skills", 36, 24, 28, t["ink"], 2)}
+<text x="78" y="47" font-family="{INTER}" font-weight="700" font-size="22" fill="{t["ink"]}">Skills &amp; Technologies</text>
 {"".join(rows)}
-</g>
+</g>{edge(W, H, t)}
 </svg>
 '''
 
@@ -379,8 +451,8 @@ def connect_tile(i, fname, label, slug):
             f'<text x="52" y="84" text-anchor="middle" font-family="{INTER}" font-weight="600" font-size="12.5" fill="#cbd5e1">{escape(label)}</text></svg>')
 
 
-def connect_heading():
-    """White ink card that matches the hero: the heading in the name's script, a self-drawing brush line, and a few leaves."""
+def connect_heading(t):
+    """Ink card that matches the hero: the heading in the name's script, a self-drawing brush line, and a few leaves."""
     W, H = 1024, 140
     title = "Let's connect"
     sub = "Open to internships, research collaborations and great conversations."
@@ -396,7 +468,7 @@ def connect_heading():
             f'<g opacity="0"><animate attributeName="opacity" values="0;{op};{op};0" keyTimes="0;.15;.8;1" dur="{dur}s" begin="{begin}s" repeatCount="indefinite"/>'
             f'<animateMotion path="{path}" dur="{dur}s" begin="{begin}s" repeatCount="indefinite"/>'
             f'<g transform="scale({s * 1.3:.2f})"><g><animateTransform attributeName="transform" type="rotate" values="0;{spin};{spin * 2}" dur="{dur * .9:.1f}s" begin="{begin}s" repeatCount="indefinite"/>'
-            f'<path d="{LEAF}" fill="{col}"/><path d="{VEIN}" stroke="#fff" stroke-width=".7" opacity=".55"/></g></g></g>')
+            f'<path d="{LEAF}" fill="{t["leaves"].get(col, col)}"/><path d="{VEIN}" stroke="{t["vein"]}" stroke-width=".7" opacity=".55"/></g></g></g>')
     return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="Let's connect. {sub}">
 <title>Let's connect</title>
 <defs>{fonts}
@@ -405,14 +477,22 @@ def connect_heading():
   <clipPath id="frame"><rect width="{W}" height="{H}" rx="18"/></clipPath>
 </defs>
 <g clip-path="url(#frame)">
-<rect width="{W}" height="{H}" fill="#fff"/>
+<rect width="{W}" height="{H}" fill="{t["card"]}"/>
 {"".join(leaves)}
-<text x="{W // 2}" y="62" text-anchor="middle" font-family="{KAUSHAN}" font-size="44" fill="{INK}" clip-path="url(#ttl)">{escape(title)}</text>
-{brush(W // 2 - 58, 80, W // 2 + 62, 76, 1.0, 3.2)}
-<text x="{W // 2}" y="111" text-anchor="middle" font-family="{JB}" font-size="13" fill="#475569" clip-path="url(#sub)">{escape(sub)}</text>
-</g>
+<text x="{W // 2}" y="62" text-anchor="middle" font-family="{KAUSHAN}" font-size="44" fill="{t["ink"]}" clip-path="url(#ttl)">{escape(title)}</text>
+{brush(W // 2 - 58, 80, W // 2 + 62, 76, 1.0, 3.2, t["ink"])}
+<text x="{W // 2}" y="111" text-anchor="middle" font-family="{JB}" font-size="13" fill="{t["sub"]}" clip-path="url(#sub)">{escape(sub)}</text>
+</g>{edge(W, H, t)}
 </svg>
 '''
+
+
+def write_svg(path, svg):
+    # GitHub serves these as standalone images, so they must be well-formed XML
+    # (an undeclared xlink: prefix renders as a broken image there, though HTML embeds forgive it).
+    ElementTree.fromstring(svg)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(svg)
 
 
 def main():
@@ -424,24 +504,20 @@ def main():
     a = ap.parse_args()
     NM = a.node_modules
     os.makedirs(a.out, exist_ok=True)
-    for name, build in (("hero.svg", hero), ("skills.svg", skills)):
-        if a.only and name[:-4] not in a.only:
+    for name, build in (("hero", hero), ("skills", skills)):
+        if a.only and name not in a.only:
             continue
-        svg = build()
-        # GitHub serves these as standalone images, so they must be well-formed XML
-        # (an undeclared xlink: prefix renders as a broken image there, though HTML embeds forgive it).
-        ElementTree.fromstring(svg)
-        with open(os.path.join(a.out, name), "w", encoding="utf-8") as f:
-            f.write(svg)
-        print(f"{name}: {len(svg)/1024:.0f} KB")
+        for t, suffix in ((LIGHT, ""), (DARK, "-dark")):
+            svg = build(t)
+            write_svg(os.path.join(a.out, f"{name}{suffix}.svg"), svg)
+            print(f"{name}{suffix}.svg: {len(svg)/1024:.0f} KB")
     if not a.only or "connect" in a.only:
         os.makedirs(os.path.join(a.out, "connect"), exist_ok=True)
         simple_icon("github", 0, 0, 1)  # loads the brand-colour table used by the tiles
-        files = [("heading", connect_heading())] + [(f, connect_tile(i, f, l, s)) for i, (f, l, s) in enumerate(CONNECT)]
+        files = ([("heading", connect_heading(LIGHT)), ("heading-dark", connect_heading(DARK))]
+                 + [(f, connect_tile(i, f, l, s)) for i, (f, l, s) in enumerate(CONNECT)])
         for fname, svg in files:
-            ElementTree.fromstring(svg)
-            with open(os.path.join(a.out, "connect", f"{fname}.svg"), "w", encoding="utf-8") as f:
-                f.write(svg)
+            write_svg(os.path.join(a.out, "connect", f"{fname}.svg"), svg)
             print(f"connect/{fname}.svg: {len(svg)/1024:.1f} KB")
 
 

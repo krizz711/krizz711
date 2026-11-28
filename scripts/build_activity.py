@@ -7,10 +7,14 @@ re-rolled on every build, so it never shows the real commit history; only the
 yearly contribution total in the corner is live data. It is all SMIL, so it
 plays inside a README <img>, then resets and loops.
 
+Each build writes the same battle twice: activity.svg on a white card for GitHub's
+light themes and activity-dark.svg on a dark card for its dark themes. The README
+pairs them in a <picture>, so each viewer sees the one matching their GitHub theme.
+
 Runs in GitHub Actions (.github/workflows/profile-assets.yml) with the
 workflow's GITHUB_TOKEN and nothing but the standard library.
 
-    python scripts/build_activity.py <login> dist/activity.svg
+    python scripts/build_activity.py <login> dist/activity.svg     # also writes dist/activity-dark.svg
     python scripts/build_activity.py --mock dist/activity.svg      # offline preview
 """
 import json
@@ -36,6 +40,15 @@ INTER = "'Inter','Segoe UI',Helvetica,Arial,sans-serif"
 INK, INK2, MUTED, LINE = "#0f172a", "#1f2937", "#6b7280", "#e5e7eb"
 GREENS = ["#ebedf0", "#9be9a8", "#40c463", "#30a14e", "#216e39"]
 FLASH = "#e0fbff"
+THEMES = {
+    "light": {"card": "#fff", "edge": None, "ink": INK, "ink2": INK2, "muted": MUTED, "line": LINE,
+              "greens": GREENS, "kame": "#1d4ed8", "shadow": (INK, ".16"), "rim": None},
+    # GitHub's dark card, border and contribution greens. Goku's black hair and outline would
+    # vanish on it, so here he gets a thin, flat grey rim (an outline, not a glow).
+    "dark": {"card": "#151b23", "edge": "#3d444d", "ink": "#f0f6fc", "ink2": "#d1d9e0", "muted": "#9198a1", "line": "#3d444d",
+             "greens": ["#212830", "#0e4429", "#006d32", "#26a641", "#39d353"], "kame": "#79c0ff", "shadow": ("#000", ".5"),
+             "rim": "#8b949e"},
+}
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 W, H = 1024, 252
@@ -149,10 +162,17 @@ def plan(areas):
 
 
 # ───────────────────────────── rendering ─────────────────────────────
-def sprite_defs():
+def sprite_defs(t):
     """Goku's frames and the pixel Kamehameha pieces, defined once and placed with <use>."""
     fr = gs.frames()
-    out = [f'<g id="g-{n}">{gs.to_svg(fr[n], PX, -gs.W / 2 * PX, -gs.HANDS[1] * PX)}</g>' for n in ("run1", "run2", "charge", "fire", "win")]
+    rim = ' filter="url(#rim)"' if t["rim"] else ""
+    out = [f'<g id="g-{n}"{rim}>{gs.to_svg(fr[n], PX, -gs.W / 2 * PX, -gs.HANDS[1] * PX)}</g>' for n in ("run1", "run2", "charge", "fire", "win")]
+    if t["rim"]:
+        # one sprite pixel of flat grey round his silhouette, so the black hair reads on the dark card
+        out.append(f'<filter id="rim" x="-20%" y="-20%" width="140%" height="140%">'
+                   f'<feMorphology in="SourceAlpha" operator="dilate" radius="{PX}" result="fat"/>'
+                   f'<feFlood flood-color="{t["rim"]}" flood-opacity=".7"/><feComposite in2="fat" operator="in"/>'
+                   f'<feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>')
 
     def centred(name, rows):
         return f'<g id="{name}">{gs.to_svg(rows, PX, -len(rows[0]) / 2 * PX, -len(rows) / 2 * PX)}</g>'
@@ -193,7 +213,7 @@ SPARKS = [(_r.uniform(-20, 18), _r.choice((2, 2.5, 3)), _r.choice(("#67e8f9", "#
            _r.uniform(.8, 1.4), _r.uniform(0, 1.4)) for _ in range(12)]
 
 
-def goku(segs, T):
+def goku(segs, T, t):
     pos = []
     for t0, t1, *_, a, b in segs:
         pos += [(t0, f"{f2(a[0])} {f2(a[1])}"), (t1, f"{f2(b[0])} {f2(b[1])}")]
@@ -213,7 +233,7 @@ def goku(segs, T):
         f'<animate attributeName="opacity" values="0;.95;0" dur="{d:.2f}s" begin="{b0:.2f}s" repeatCount="indefinite"/></rect>'
         for x, sz, c, d, b0 in SPARKS)
     return (f'<g>{animate("transform", pos, T, transform="translate")}{animate("opacity", teleport, T)}'
-            f'<ellipse cx="0" cy="{f2((gs.H - gs.HANDS[1]) * PX + .5)}" rx="{f2(11 * PX)}" ry="{f2(2.2 * PX)}" fill="{INK}" opacity=".16"/>'
+            f'<ellipse cx="0" cy="{f2((gs.H - gs.HANDS[1]) * PX + .5)}" rx="{f2(11 * PX)}" ry="{f2(2.2 * PX)}" fill="{t["shadow"][0]}" opacity="{t["shadow"][1]}"/>'
             + state(("idle", "run", "win"), f'<g shape-rendering="auto">{sparks}</g>')
             + f'<g filter="url(#aura)">{turn}'
             + state("idle", '<use xlink:href="#g-win"/>')
@@ -225,7 +245,7 @@ def goku(segs, T):
             + '</g></g>')
 
 
-def blast(b, T, i):
+def blast(b, T, i, t):
     side, hx, y = b["side"], b["hx"], b["y"]
     length = abs(b["centre"][0] - hx)
     cx, cy = b["centre"]
@@ -258,50 +278,53 @@ def blast(b, T, i):
     if i == 0:
         gx = min(max(hx - side * HAND_X, 90), W - 90)
         out.append(f'<text x="{f2(gx)}" y="{f2(y - gs.HANDS[1] * PX - 8)}" text-anchor="middle" font-family="{INTER}" font-weight="700" '
-                   f'font-size="11" letter-spacing="1" fill="#1d4ed8" opacity="0">KA-ME-HA-ME-HA!'
+                   f'font-size="11" letter-spacing="1" fill="{t["kame"]}" opacity="0">KA-ME-HA-ME-HA!'
                    + animate("opacity", [(0, 0), (b["charge"], 0), (b["charge"] + .08, 1), (b["end"] + .5, 1), (b["end"] + .8, 0)], T) + "</text>")
     return "".join(out), orb
 
 
-def render(cal):
-    now = datetime.now(timezone.utc)
-    rng = random.Random(f"{now.date()}-{now.hour // 12}")   # a new battle every build
+def render(cal, theme, seed):
+    rng = random.Random(seed)
     segs, blasts, T = plan(random_areas(rng))
     reveal = {c: v for b in blasts for c, v in b["reveal"].items()}
-    fx = [blast(b, T, i) for i, b in enumerate(blasts)]
+    fx = [blast(b, T, i, theme) for i, b in enumerate(blasts)]
 
+    greens = theme["greens"]
     cells = []
     for w in range(WEEKS):
         for d in range(7):
             x, y = X0 + w * STEP, Y0 + d * STEP
             if (w, d) in reveal:
                 t, lv = reveal[(w, d)]
-                g = GREENS[lv]
-                fill = animate("fill", [(0, GREENS[0]), (t, GREENS[0]), (t + .05, FLASH), (t + .3, g), (T - RESET, g), (T - RESET / 2, GREENS[0])], T)
-                cells.append(f'<rect x="{x}" y="{y}" width="{CS}" height="{CS}" rx="3" fill="{GREENS[0]}">{fill}</rect>')
+                g = greens[lv]
+                fill = animate("fill", [(0, greens[0]), (t, greens[0]), (t + .05, FLASH), (t + .3, g), (T - RESET, g), (T - RESET / 2, greens[0])], T)
+                cells.append(f'<rect x="{x}" y="{y}" width="{CS}" height="{CS}" rx="3" fill="{greens[0]}">{fill}</rect>')
             else:
-                cells.append(f'<rect x="{x}" y="{y}" width="{CS}" height="{CS}" rx="3" fill="{GREENS[0]}"/>')
+                cells.append(f'<rect x="{x}" y="{y}" width="{CS}" height="{CS}" rx="3" fill="{greens[0]}"/>')
     total = cal["totalContributions"]
     css_path = os.path.join(HERE, "activity-fonts.css")
     fonts = f"<style>{open(css_path).read()}</style>" if os.path.exists(css_path) else ""
-    icon = ('<svg x="36" y="24" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    icon = (f'<svg x="36" y="24" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="{theme["ink"]}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
             '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>')
+    # the light card keeps its top hairline; the dark card has a full border instead
+    hairline = "" if theme["edge"] else f'<rect x="36" y="0" width="{W - 72}" height="1" fill="{theme["line"]}"/>\n'
+    border = (f'\n<rect x=".5" y=".5" width="{W - 1}" height="{H - 1}" rx="17.5" fill="none" stroke="{theme["edge"]}"/>'
+              if theme["edge"] else "")
     return f'''<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="Training Ground: a pixel-art Goku charges up in a cyan aura and fires Kamehameha blasts across a decorative grid. {total:,} GitHub contributions in the last year.">
 <title>Training Ground</title>
 <defs>{fonts}<clipPath id="frame"><rect width="{W}" height="{H}" rx="18"/></clipPath>
-  {sprite_defs()}
+  {sprite_defs(theme)}
 </defs>
 <g clip-path="url(#frame)">
-<rect width="{W}" height="{H}" fill="#fff"/>
-<rect x="36" y="0" width="{W - 72}" height="1" fill="{LINE}"/>
-{icon}
-<text x="78" y="47" font-family="{INTER}" font-weight="700" font-size="22" fill="{INK}">Training Ground</text>
-<text x="988" y="46" text-anchor="end" font-family="{INTER}" font-size="12" fill="{MUTED}"><tspan font-weight="600" fill="{INK2}">{total:,}</tspan> contributions in the last year</text>
+<rect width="{W}" height="{H}" fill="{theme["card"]}"/>
+{hairline}{icon}
+<text x="78" y="47" font-family="{INTER}" font-weight="700" font-size="22" fill="{theme["ink"]}">Training Ground</text>
+<text x="988" y="46" text-anchor="end" font-family="{INTER}" font-size="12" fill="{theme["muted"]}"><tspan font-weight="600" fill="{theme["ink2"]}">{total:,}</tspan> contributions in the last year</text>
 {"".join(cells)}
 <g shape-rendering="crispEdges">{"".join(under for under, _ in fx)}
-{goku(segs, T)}
+{goku(segs, T, theme)}
 {"".join(over for _, over in fx)}</g>
-</g>
+</g>{border}
 </svg>
 '''
 
@@ -309,9 +332,12 @@ def render(cal):
 if __name__ == "__main__":
     login, out = sys.argv[1], sys.argv[2]
     cal = mock() if login == "--mock" else fetch(login, os.environ["GITHUB_TOKEN"])
-    svg = render(cal)
-    ElementTree.fromstring(svg)  # GitHub only renders well-formed XML
+    now = datetime.now(timezone.utc)
+    seed = f"{now.date()}-{now.hour // 12}"   # a new battle every build; both themes show the same one
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    with open(out, "w", encoding="utf-8") as f:
-        f.write(svg)
-    print(f"wrote {out} ({len(svg) / 1024:.0f} KB)")
+    for theme, path in (("light", out), ("dark", out[:-len(".svg")] + "-dark.svg")):
+        svg = render(cal, THEMES[theme], seed)
+        ElementTree.fromstring(svg)  # GitHub only renders well-formed XML
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(svg)
+        print(f"wrote {path} ({len(svg) / 1024:.0f} KB)")
